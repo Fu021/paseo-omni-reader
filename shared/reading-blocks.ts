@@ -1,11 +1,14 @@
-import type { FormulaImage } from "./contracts";
+import { formulaImageUri, type FormulaImage } from "./contracts";
 import { formulaKey, inlineFormula, lineOffsets, markdownParser, type FormulaSpan } from "./markdown-math";
 
 export type ReadingBlock =
   | { kind: "markdown"; text: string }
   | { kind: "code"; text: string; language: string }
   | { kind: "table"; rows: string[][] }
-  | { kind: "formula"; image: FormulaImage; tex: string };
+  | { kind: "formula"; image?: FormulaImage; tex: string; source: string };
+
+export const inlineMathMarker = /\uE000omni(\d+)\uE001/g;
+export interface InlineMath { image: FormulaImage; tex: string }
 
 function appendText(blocks: ReadingBlock[], text: string) {
   if (text.trim()) blocks.push({ kind: "markdown", text });
@@ -46,23 +49,32 @@ function layoutBlocks(text: string, blocks: ReadingBlock[]) {
 }
 
 export function readingBlocks(
-  source: string, spans: FormulaSpan[], images: ReadonlyMap<string, FormulaImage | null>,
+  source: string, spans: FormulaSpan[], images: ReadonlyMap<string, FormulaImage | null>, includeSource = false,
+  nativeMath?: InlineMath[],
 ): ReadingBlock[] {
   const result: ReadingBlock[] = [];
   let cursor = 0;
   let parts: string[] = [];
   for (const span of spans) {
-    const image = images.get(formulaKey(span));
-    if (!image?.uris.every((uri) => uri.startsWith("data:image/png;base64,"))) continue;
+    const candidate = images.get(formulaKey(span));
+    const image = candidate?.uris.every((uri) => formulaImageUri.test(uri)) ? candidate : undefined;
     parts.push(source.slice(cursor, span.start));
+    const raw = source.slice(span.start, span.end);
     if (span.block) {
       layoutBlocks(parts.join(""), result);
-      result.push({ kind: "formula", image, tex: span.tex });
+      result.push({ kind: "formula", image, tex: span.tex, source: raw.trim() });
       parts = [];
+    } else if (image) {
+      if (nativeMath) {
+        const index = nativeMath.push({ image, tex: span.tex }) - 1;
+        parts.push(`\uE000omni${index}\uE001`);
+      } else {
+        const lineStart = source.lastIndexOf("\n", span.start - 1) + 1;
+        if (/^[ \t]*$/.test(source.slice(lineStart, span.start))) parts.push("\u2060");
+        parts.push(inlineFormula(span, image, includeSource));
+      }
     } else {
-      const lineStart = source.lastIndexOf("\n", span.start - 1) + 1;
-      if (/^[ \t]*$/.test(source.slice(lineStart, span.start))) parts.push("\u2060");
-      parts.push(inlineFormula(span, image));
+      parts.push(raw.replace(/[\\`*_~[\]<>|&]/g, "\\$&"));
     }
     cursor = span.end;
   }

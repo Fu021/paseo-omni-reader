@@ -1,13 +1,22 @@
 {
   "id": "paseo-omni-reader",
   "name": "Paseo Omni Reader",
-  "description": "Read Markdown, LaTeX and PDFs in Paseo chat and workspace tabs.",
+  "description": "Read streaming LaTeX, preview workspace documents and spreadsheets, and zoom and pan PDFs in Paseo.",
+  "icon": "assets/icon.png",
+  "media": [
+    "assets/chat-en.png",
+    "assets/markdown-en.png",
+    "assets/pdf-en.png",
+    "assets/chat-zh-CN.png",
+    "assets/markdown-zh-CN.png",
+    "assets/pdf-zh-CN.png"
+  ],
   "translations": {
     "zh-CN": {
       "name": "Paseo Omni Reader",
-      "description": "在 Paseo 聊天和工作区中阅读 Markdown、LaTeX 公式与 PDF。"
+      "description": "在 Paseo 中流式阅读 LaTeX，预览工作区文档与表格，缩放和平移 PDF。"
     }
   },
   "requirements": { "paseo": ">=0.17.4" },
-  "build": [["npm", "ci", "--include=dev"], ["npm", "run", "build"]]
+  "build": [["npm", "ci", "--include=dev", "--ignore-scripts"], ["npm", "run", "build"]]
 }

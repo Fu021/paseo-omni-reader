@@ -3,6 +3,7 @@ import { maxFormulaLength, type Formula, type FormulaImage } from "./contracts";
 
 export const markdownParser = new MarkdownIt({ html: true });
 export const possibleMath = /[$]|\\[([]|(?:`{3,}|~{3,})[ \t]*math\b/i;
+export const formulaTitlePrefix = "omni-latex:";
 
 export interface FormulaSpan extends Formula {
   start: number;
@@ -31,15 +32,18 @@ function opaqueBlocks(source: string): OpaqueBlock[] {
     if (!token.map || !["fence", "code_block", "html_block"].includes(token.type)) return [];
     const start = offsets[token.map[0]];
     const end = offsets[token.map[1]];
-    const tex = token.content.trim();
     if (
       token.type === "fence" &&
       token.info.trim().toLowerCase() === "math" &&
-      /^\s*(?:`{3,}|~{3,})\s*math\b/i.test(source.slice(start, end)) &&
-      /(?:^|\n)[ \t]*(?:`{3,}|~{3,})[ \t]*(?:\r?\n)?$/.test(source.slice(start, end)) &&
-      tex.length > 0 && tex.length <= maxFormulaLength
+      token.map[1] - token.map[0] >= 3 &&
+      /^\s*(?:`{3,}|~{3,})\s*math\b/i.test(source.slice(start, offsets[token.map[0] + 1]))
     ) {
-      return [{ start, end, formula: { start, end, tex, display: true, block: true } }];
+      const closingLine = source.slice(offsets[token.map[1] - 1], end).replace(/(?:\r\n|\r|\n)$/, "");
+      const marker = /^ {0,3}(`+|~+)[ \t]*$/.exec(closingLine)?.[1];
+      const tex = token.content.trim();
+      if (marker?.startsWith(token.markup) && tex.length > 0 && tex.length <= maxFormulaLength) {
+        return [{ start, end, formula: { start, end, tex, display: true, block: true } }];
+      }
     }
     return [{ start, end }];
   });
@@ -103,10 +107,9 @@ function readFormula(source: string, start: number, limit: number): FormulaSpan 
       const end = index + close.length;
       const lineStart = source.lastIndexOf("\n", start - 1) + 1;
       const nextLine = source.indexOf("\n", end);
-      const block = display &&
-        /^[ \t]*$/.test(source.slice(lineStart, start)) &&
+      const block = /^[ \t]*$/.test(source.slice(lineStart, start)) &&
         /^[ \t\r]*$/.test(source.slice(end, nextLine < 0 ? source.length : nextLine));
-      return { start, end, tex, display, block };
+      return { start, end, tex, display: display || block, block };
     }
     if (source[index] === "\\") index++;
   }
@@ -165,8 +168,10 @@ export function formulaKey({ tex, display }: Formula): string {
   return `${display ? "display" : "inline"}:${tex}`;
 }
 
-export function inlineFormula(span: FormulaSpan, image: FormulaImage): string {
-  const alt = span.tex.replace(/[\r\n\t]+/g, " ")
-    .replace(/[\\[\]`*_<>$]/g, "\\$&").replaceAll("|", "&#124;");
-  return image.uris.map((uri, index) => `![${index ? "" : alt}](${uri})`).join("\u2060");
+export function inlineFormula(span: FormulaSpan, image: FormulaImage, includeSource: boolean): string {
+  const tex = span.tex.replace(/[\r\n\t]+/g, " ");
+  const alt = tex.replace(/[\\[\]`*_<>$]/g, "\\$&").replaceAll("|", "&#124;");
+  const depth = image.baseline === undefined ? "" : `:${Math.round(image.height - image.baseline)}`;
+  const title = includeSource ? ` "${formulaTitlePrefix}${image.height}${depth}:${encodeURIComponent(span.tex)}"` : "";
+  return image.uris.map((uri, index) => `![${index ? "" : alt}](${uri}${title})`).join("\u2060");
 }

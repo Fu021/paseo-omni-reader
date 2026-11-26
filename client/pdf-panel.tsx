@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Image, Keyboard, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from "react-native";
+import { Image, Keyboard, Modal, SafeAreaView, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
 import { Loading } from "@getpaseo/plugin/client/ui";
 import { renderPdfPage } from "../shared/contracts";
 import { Control, ReadError, Toolbar, useFileGeneration } from "./controls";
+import { ExternalFileAction } from "./external-file";
 import { messages } from "./messages";
 import { clamp, constrain, moveContacts, widthScale, zoomAt, type Contact, type Point, type Position, type Size } from "./pdf-geometry";
 import { bindWebGestures } from "./web";
@@ -13,17 +14,40 @@ function quality(width: number) {
   return clamp(Math.ceil(width / 256) * 256, 256, 2560);
 }
 
-function nativeContacts(event: GestureResponderEvent): Contact[] {
+function nativeContacts(event: GestureResponderEvent, origin: Point): Contact[] {
   return [...event.nativeEvent.touches].slice(0, 2)
-    .map(({ identifier, locationX, locationY }) => ({ id: Number(identifier), x: locationX, y: locationY }))
+    .map(({ identifier, pageX, pageY }) => ({ id: Number(identifier), x: pageX - origin.x, y: pageY - origin.y }))
     .sort((first, second) => first.id - second.id);
 }
 
 export function PdfPanel(props: PluginFilePanelProps) {
-  return <PdfReader key={props.file.path} {...props} />;
+  return props.layout.platform === "web" ? <PdfReader key={props.file.path} {...props} />
+    : <NativePdfPanel key={props.file.path} {...props} />;
 }
 
-function PdfReader({ file, workspaceId, host, layout, theme }: PluginFilePanelProps) {
+function NativePdfPanel(props: PluginFilePanelProps) {
+  const { t } = useTranslation(messages);
+  const [open, setOpen] = useState(true);
+  const close = () => setOpen(false);
+  const { file, theme, layout: { compact } } = props;
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
+      <Toolbar theme={theme}>
+        <Control title={t("openPdf")} onPress={() => setOpen(true)} theme={theme} compact={compact} />
+        <ExternalFileAction file={file} theme={theme} compact={compact} />
+      </Toolbar>
+      <Text style={{ color: theme.colors.foreground, padding: 16 }}>{file.name}</Text>
+      <Modal visible={open} presentationStyle="fullScreen" supportedOrientations={["portrait", "landscape"]}
+        hardwareAccelerated onRequestClose={close}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
+          <PdfReader {...props} onClose={close} />
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+function PdfReader({ file, workspaceId, host, layout, theme, onClose }: PluginFilePanelProps & { onClose?: () => void }) {
   const generation = useFileGeneration(file);
   const rpc = useRpc(renderPdfPage);
   const { t } = useTranslation(messages);
@@ -38,6 +62,7 @@ function PdfReader({ file, workspaceId, host, layout, theme }: PluginFilePanelPr
   const [position, setPosition] = useState<{ key: string; value: Position }>();
   const viewportRef = useRef<View>(null);
   const pointers = useRef<Contact[]>([]);
+  const touchOrigin = useRef<Point>({ x: 0, y: 0 });
   const operations = useRef<Parameters<typeof bindWebGestures>[1] | null>(null);
   const active = useRef<Position | null>(null);
 
@@ -131,6 +156,7 @@ function PdfReader({ file, workspaceId, host, layout, theme }: PluginFilePanelPr
   return (
     <View testID="omni-pdf-reader" style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface1 }}>
       <Toolbar theme={theme}>
+        {onClose && <Control title={t("closePdf")} onPress={onClose} theme={theme} compact={compact} />}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
           <Control title="‹" label={t("previous")} disabled={page <= 1} onPress={() => goTo(page - 1)} theme={theme} compact={compact} />
           <TextInput
@@ -164,6 +190,7 @@ function PdfReader({ file, workspaceId, host, layout, theme }: PluginFilePanelPr
           <Control title="+" label={t("zoomIn")} disabled={!hasImage} onPress={() => zoom(1.25)} theme={theme} compact={compact} />
           <Control title={t("fitWidth")} disabled={!hasImage} onPress={() => update((_, dimensions) => constrain({ x: 0, y: 0, scale: fit }, dimensions, viewport))} theme={theme} compact={compact} />
           <Control title={t("reset")} disabled={!hasImage} onPress={() => update((_, dimensions) => constrain({ x: 0, y: 0, scale: 1 }, dimensions, viewport))} theme={theme} compact={compact} />
+          <ExternalFileAction file={file} theme={theme} compact={compact} />
         </View>
       </Toolbar>
       <View
@@ -176,8 +203,12 @@ function PdfReader({ file, workspaceId, host, layout, theme }: PluginFilePanelPr
         )}
         onStartShouldSetResponder={web ? undefined : () => hasImage}
         onMoveShouldSetResponder={web ? undefined : () => hasImage}
-        onResponderGrant={web ? undefined : (event) => { pointers.current = nativeContacts(event); }}
-        onResponderMove={web ? undefined : (event) => track(nativeContacts(event))}
+        onResponderGrant={web ? undefined : (event) => {
+          const { pageX, pageY, locationX, locationY } = event.nativeEvent;
+          touchOrigin.current = { x: pageX - locationX, y: pageY - locationY };
+          pointers.current = nativeContacts(event, touchOrigin.current);
+        }}
+        onResponderMove={web ? undefined : (event) => track(nativeContacts(event, touchOrigin.current))}
         onResponderRelease={web ? undefined : () => track([])}
         onResponderTerminate={web ? undefined : () => track([])}
         onResponderTerminationRequest={web ? undefined : () => false}

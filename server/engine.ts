@@ -1,8 +1,9 @@
 import { Worker } from "node:worker_threads";
-import source from "./generated/worker";
+import documentWorker from "./generated/document-worker";
+import mathWorker from "./generated/math-worker";
 import type { EngineRequest, EngineResponse, EngineResults } from "./worker-entry";
 
-export function createEngine() {
+function createWorkerQueue(source: string) {
   let worker: Worker | undefined;
   let queue = Promise.resolve();
   let idle: ReturnType<typeof setTimeout> | undefined;
@@ -64,4 +65,17 @@ export function createEngine() {
   }
 
   return { dispatch, stop: () => { stopped = true; release(); } };
+}
+
+export function createEngine() {
+  const math = createWorkerQueue(mathWorker);
+  const document = createWorkerQueue(documentWorker);
+  return {
+    dispatch: <Request extends EngineRequest>(request: Request) =>
+      (request.kind === "math" ? math : document).dispatch(request),
+    stop: () => {
+      math.stop();
+      document.stop();
+    },
+  };
 }

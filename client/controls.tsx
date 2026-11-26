@@ -1,7 +1,8 @@
-import type { PluginHostProps } from "@getpaseo/plugin/client";
+import { useTranslation, type PluginHostProps } from "@getpaseo/plugin/client";
 import { Pressable, Text, View } from "react-native";
 import { useEffect, useState, type ReactNode } from "react";
 import type { PluginFilePanelProps } from "@getpaseo/plugin/client";
+import { messages } from "./messages";
 
 export type Theme = PluginHostProps["theme"];
 
@@ -54,10 +55,19 @@ export function Toolbar({ theme, children }: { theme: Theme; children: ReactNode
 export function ReadError({ theme, label, error, retry, onRetry, compact }: {
   theme: Theme; label: string; error: unknown; retry: string; onRetry: () => void; compact: boolean;
 }) {
+  const { t } = useTranslation(messages);
+  const message = error instanceof Error ? error.message : "";
+  const detail = message.includes("128 MiB reader limit") ? t("pdfTooLarge")
+    : message.includes("Document exceeds the preview limit") ? t("documentTooLarge")
+    : message.includes("supports UTF-8") ? t("textEncoding")
+    : message.includes("File changed") || message.includes("File ended") ? t("fileChanged")
+    : message.includes("outside the workspace") ? t("outsideWorkspace")
+    : message.includes("File is no longer available") || message.includes("ENOENT") ? t("fileUnavailable")
+    : undefined;
   return (
     <View accessibilityRole="alert" style={{ alignItems: "flex-start", gap: 6, padding: 16 }}>
       <Text style={{ color: theme.colors.foreground, fontWeight: "600" }}>{label}</Text>
-      {error instanceof Error && <Text selectable style={{ color: theme.colors.foregroundMuted }}>{error.message}</Text>}
+      {detail && <Text selectable style={{ color: theme.colors.foregroundMuted }}>{detail}</Text>}
       <Control title={retry} onPress={onRetry} theme={theme} compact={compact} />
     </View>
   );

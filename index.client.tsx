@@ -3,7 +3,10 @@ import { AssistantReader, transformAssistant } from "./client/markdown";
 import { messages } from "./client/messages";
 import { PdfPanel } from "./client/pdf-panel";
 import { TextPanel } from "./client/text-panel";
-import { markdownExtensions, markdownKind, messageSchema, textExtensions } from "./shared/contracts";
+import { StructuredPanel, VisualPanel } from "./client/document-panel";
+import {
+  dataExtensions, frameExtensions, imageExtensions, markdownExtensions, markdownKind, messageSchema, officeExtensions, textExtensions,
+} from "./shared/contracts";
 
 export default function contribute(client: PluginClientContext) {
   const registrations = [
@@ -18,6 +21,14 @@ export default function contribute(client: PluginClientContext) {
     client.addFilePanel({
       id: "pdf", title: messages.message("pdf"), icon: "FileText",
       files: { extensions: ["pdf"] }, Component: PdfPanel,
+    }),
+    client.addFilePanel({
+      id: "document", title: messages.message("document"), icon: "FileText",
+      files: { extensions: [...officeExtensions, ...dataExtensions] }, Component: StructuredPanel,
+    }),
+    client.addFilePanel({
+      id: "visual", title: messages.message("visual"), icon: "Image",
+      files: { extensions: [...frameExtensions, ...imageExtensions] }, Component: VisualPanel,
     }),
     client.addTimelineRenderer({
       kind: markdownKind, version: 1, schema: messageSchema, Component: AssistantReader,
