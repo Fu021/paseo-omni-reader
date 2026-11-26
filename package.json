@@ -1,0 +1,50 @@
+{
+  "name": "paseo-omni-reader",
+  "version": "0.1.0",
+  "description": "Read Markdown, LaTeX and PDFs in Paseo chat and workspace tabs.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Fu021/paseo-omni-reader.git"
+  },
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "files": [
+    "paseo-plugin.json",
+    "OVERVIEW*.md",
+    "index.client.tsx",
+    "index.server.ts",
+    "client/",
+    "server/",
+    "shared/"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
+    "typecheck": "npm run build && tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "node --import tsx --test --test-isolation=none test/*.test.ts"
+  },
+  "dependencies": {
+    "@hyzyla/pdfium": "3.0.0",
+    "@resvg/resvg-wasm": "2.6.2",
+    "jpeg-js": "0.4.4",
+    "markdown-it": "15.0.3",
+    "mathjax-full": "3.2.2"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.17.4",
+    "@tanstack/react-query": "5.90.11",
+    "@types/markdown-it": "14.1.2",
+    "@types/node": "^22.0.0",
+    "@types/react": "~19.1.0",
+    "esbuild": "^0.28.2",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.9.12"
+  }
+}

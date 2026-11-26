@@ -1,0 +1,13 @@
+{
+  "id": "paseo-omni-reader",
+  "name": "Paseo Omni Reader",
+  "description": "Read Markdown, LaTeX and PDFs in Paseo chat and workspace tabs.",
+  "translations": {
+    "zh-CN": {
+      "name": "Paseo Omni Reader",
+      "description": "在 Paseo 聊天和工作区中阅读 Markdown、LaTeX 公式与 PDF。"
+    }
+  },
+  "requirements": { "paseo": ">=0.17.4" },
+  "build": [["npm", "ci", "--include=dev"], ["npm", "run", "build"]]
+}
