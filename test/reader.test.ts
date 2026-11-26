@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { findFormulas, formulaKey } from "../shared/markdown-math";
@@ -114,6 +114,34 @@ test("keeps native math as individual attachments and retains chat links", () =>
   assert.match(block.text, /\[PDF\]\(\.\/report\.pdf\) \[TS\]\(\.\/example\.ts#L31\)/);
   assert.doesNotMatch(block.text, /data:image/);
   assert.deepEqual(attachments, [{ image, tex: String.raw`\frac{a+b}{2}` }]);
+});
+
+test("resolves nested Markdown links for preview and preserves the authored source", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "omni-links-"));
+  try {
+    const directory = join(folder, "文档");
+    await mkdir(directory);
+    const source = [
+      String.raw`中文 \(E=mc^2\) [PDF](./report.pdf) [code](../example.ts#L31) ![chart](<chart (1).png>)`,
+      '[contents][guide] [external](https://example.test/path) [anchor](#section) [outside](../../outside.pdf)',
+      '`[literal](./code.pdf)`',
+      '',
+      '[guide]: ./guide.md "Guide"',
+      '',
+      '```md', '[example](./fixture.pdf)', '```',
+    ].join("\r\n");
+    const path = join(directory, "notes.md");
+    await writeFile(path, source);
+    const result = await loadTextPage(folder, path, 0);
+    assert.equal(result.source, source);
+    assert.equal(result.markdown, source
+      .replace("(./report.pdf)", "(./%E6%96%87%E6%A1%A3/report.pdf)")
+      .replace("(../example.ts#L31)", "(./example.ts#L31)")
+      .replace("<chart (1).png>", "<./%E6%96%87%E6%A1%A3/chart%20%281%29.png>")
+      .replace("[guide]: ./guide.md", "[guide]: ./%E6%96%87%E6%A1%A3/guide.md"));
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
 });
 
 test("reads a UTF-8 Markdown document beyond 1 MiB by byte offset and retains code fences", async () => {

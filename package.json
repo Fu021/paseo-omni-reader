@@ -1,6 +1,6 @@
 {
   "name": "paseo-omni-reader",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Read streaming LaTeX, preview workspace documents and spreadsheets, and zoom and pan PDFs in Paseo.",
   "repository": {
     "type": "git",
@@ -36,6 +36,8 @@
     "jpeg-js": "0.4.4",
     "markdown-it": "15.0.3",
     "mathjax-full": "3.2.2",
+    "micromark": "4.0.3",
+    "micromark-util-decode-string": "2.0.1",
     "yauzl": "3.4.0"
   },
   "devDependencies": {

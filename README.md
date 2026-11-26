@@ -11,7 +11,7 @@ Omni Reader adds LaTeX to streaming assistant replies and read-only previews for
 ## What you can read
 
 - **Assistant replies.** Complete formulas render during streaming. Inline fractions have room to show their numerator and denominator, standalone equations are centered, and wide tables and long code scroll horizontally. Hover to see LaTeX or click to copy in a browser. Touch and hold any formula in the native app to see or copy its source.
-- **Workspace documents.** Switch Markdown between preview and source, or keep reading large UTF-8 files as sections load. Preview Word paragraphs and tables, Excel worksheets, PowerPoint slide text, CSV and TSV tables, HTML, SVG, and common images. Links with a source line, such as `example.ts#L31`, use Paseo’s line navigation.
+- **Workspace documents.** Switch Markdown between preview and source, or keep reading large UTF-8 files as sections load. Relative links in a Markdown preview resolve from the document’s folder. Links such as `example.ts#L31` use Paseo’s line navigation. Preview Word paragraphs and tables, Excel worksheets, PowerPoint slide text, CSV and TSV tables, HTML, SVG, and common images.
 - **PDFs.** Drag a page with a mouse or pinch and pan in the native full-screen reader. Jump to a page, fit the page width or restore 100% zoom.
 - **External editing.** **Open externally** downloads a copy in a browser or shares a copy with another app on iOS and Android. On Android builds where the share sheet is unavailable, use **Download** from Paseo’s file menu. Preview panels are read-only.
 

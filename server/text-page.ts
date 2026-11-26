@@ -1,6 +1,7 @@
 import { extname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { markdownExtensions, textExtensions, type Fence } from "../shared/contracts";
+import { rebaseMarkdownLinks } from "./markdown-links";
 import { withWorkspaceFile } from "./workspace-file";
 
 export const textPageBytes = 24 * 1024;
@@ -78,6 +79,8 @@ export async function loadTextPage(
     const source = offset === 0 ? kept.replace(/^\uFEFF/, "") : kept;
     const prefix = previousFence ? `${previousFence.opening}\n` : "";
     const suffix = boundary.fence ? `\n${boundary.fence.marker}\n` : "";
-    return { source, markdown: prefix + source + suffix, size, nextOffset, revision: stamp, fence: boundary.fence };
+    const preview = prefix + source + suffix;
+    const markdown = markdownFile ? rebaseMarkdownLinks(preview, root, path) : preview;
+    return { source, markdown, size, nextOffset, revision: stamp, fence: boundary.fence };
   });
 }
