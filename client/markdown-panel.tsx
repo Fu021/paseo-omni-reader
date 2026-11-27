@@ -39,8 +39,8 @@ export function MarkdownPanel(props: PluginFilePanelProps) {
   return (
     <View testID="omni-text-panel" style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
       <Toolbar theme={theme}>
-        <Control title={t("preview")} selected={!source} onPress={() => setSource(false)} theme={theme} compact={compact} />
-        <Control title={t("source")} selected={source} onPress={() => setSource(true)} theme={theme} compact={compact} />
+        <Control title={t("preview")} icon="BookOpenText" selected={!source} onPress={() => setSource(false)} theme={theme} compact={compact} />
+        <Control title={t("source")} icon="Code" selected={source} onPress={() => setSource(true)} theme={theme} compact={compact} />
         <ExternalFileAction {...props} />
       </Toolbar>
       {document.isPending && <Loading />}

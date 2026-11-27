@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { findFormulas, formulaKey } from "../shared/markdown-math";
@@ -185,6 +185,31 @@ test("workspace preview and external opening reject paths and symlinks outside t
   }
 });
 
+test("passes the original path to the system opener without Electron daemon flags",
+  { skip: process.platform !== "linux" }, async () => {
+    const folder = await mkdtemp(join(tmpdir(), "omni-opener-"));
+    const originalEnv = process.env;
+    try {
+      const filename = "中文 [rep] $1.pdf";
+      const target = join(folder, filename);
+      const trace = join(folder, "opened");
+      await writeFile(target, "%PDF-1.7");
+      await writeFile(join(folder, "gio"), [
+        "#!/bin/sh",
+        '[ -z "$ELECTRON_RUN_AS_NODE" ] && [ -z "$PASEO_DESKTOP_MANAGED" ] && [ "$1" = open ] || exit 1',
+        'printf "%s" "$2" > "$OMNI_TEST_OPENER_TRACE"',
+      ].join("\n"), { mode: 0o700 });
+      process.env = {
+        ...originalEnv, PATH: folder, ELECTRON_RUN_AS_NODE: "1", PASEO_DESKTOP_MANAGED: "1", OMNI_TEST_OPENER_TRACE: trace,
+      };
+      await openWithDefaultApp(folder, filename);
+      assert.equal(await readFile(trace, "utf8"), target);
+    } finally {
+      process.env = originalEnv;
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
 test("continues between portrait and landscape pages that each fit entirely at 100%", () => {
   const viewport = { width: 600, height: 500 };
   const layout = fitPages([{ count: 1, width: 750, height: 1_000 }, { count: 2, width: 1_200, height: 600 }], viewport);
@@ -209,6 +234,7 @@ test("mouse drag and touch pinch/pan work at the upper edge of a zoomed PDF page
   const fingers = [{ id: 1, x: 130, y: 35 }, { id: 2, x: 230, y: 35 }];
   const pinched = moveContacts(fitted, fingers, [{ ...fingers[0], x: 60 }, { ...fingers[1], x: 300 }], layout);
   assert.equal(pinched.scale, 2.4);
+  assert.equal(moveContacts(fitted, fingers, [{ ...fingers[0], x: -900 }, fingers[1]], layout).scale, 4);
   const panned = moveContacts(pinched, mouse, [{ id: 1, x: 30, y: 35 }], layout);
   assert.ok(panned.x < pinched.x);
   assert.equal(panned.y, pinched.y);

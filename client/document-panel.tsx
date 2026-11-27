@@ -8,8 +8,8 @@ import { Control, ReadError, Toolbar, useFileGeneration, type Theme } from "./co
 import { ExternalFileAction } from "./external-file";
 import { messages } from "./messages";
 
-function DataTable({ block, theme, fill = false }: {
-  block: Extract<DocumentBlock, { kind: "table" }>; theme: Theme; fill?: boolean;
+function DataTable({ block, theme }: {
+  block: Extract<DocumentBlock, { kind: "table" }>; theme: Theme;
 }) {
   const widths = useMemo(() => {
     const columns: number[] = [];
@@ -37,14 +37,10 @@ function DataTable({ block, theme, fill = false }: {
   return (
     <ScrollView
       horizontal nestedScrollEnabled testID="omni-document-table"
-      style={{ flexGrow: fill ? 1 : 0, maxWidth: "100%" }}
+      style={{ flexGrow: 0, maxWidth: "100%" }}
       contentContainerStyle={{ borderLeftWidth: 1, borderTopWidth: 1, borderColor: theme.colors.border }}
     >
-      {fill ? (
-        <FlatList data={block.rows} style={{ width: widths.reduce((sum, width) => sum + width, 0) }}
-          nestedScrollEnabled keyExtractor={(_, index) => String(index)}
-          renderItem={({ item, index }) => renderRow(item, index)} />
-      ) : <View>{block.rows.map(renderRow)}</View>}
+      <View>{block.rows.map(renderRow)}</View>
     </ScrollView>
   );
 }
@@ -63,7 +59,6 @@ export function StructuredPanel(props: PluginFilePanelProps) {
   const sections = result.data?.sections ?? [];
   const index = Math.min(selected, Math.max(0, sections.length - 1));
   const active = sections[index];
-  const tabular = file.extension === "xlsx";
   const slides = file.extension === "pptx";
   return (
     <View testID="omni-structured-panel" style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
@@ -90,9 +85,7 @@ export function StructuredPanel(props: PluginFilePanelProps) {
       {result.data?.truncated && (
         <Text style={{ color: theme.colors.foregroundMuted, paddingHorizontal: 12, paddingVertical: 6 }}>{t("documentTruncated")}</Text>
       )}
-      {tabular && active?.blocks[0]?.kind === "table" && active.blocks[0].rows.length > 0 ? (
-        <DataTable key={index} block={active.blocks[0]} theme={theme} fill />
-      ) : active && (active.blocks.length > 0 && !tabular || active.title && slides) ? (
+      {active && (active.blocks.length > 0 || active.title && slides) ? (
         <FlatList
           key={index} data={active.blocks} keyExtractor={(_, blockIndex) => String(blockIndex)}
           contentContainerStyle={{ padding: compact ? 16 : 24, gap: 12 }}

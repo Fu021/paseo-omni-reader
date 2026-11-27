@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
 import { Loading } from "@getpaseo/plugin/client/ui";
 import { readDocumentLayout, renderOfficePage, renderPdfPage } from "../shared/contracts";
-import { Control, ReadError, Toolbar, useFileGeneration, type Theme } from "./controls";
+import { Control, ReadError, Toolbar, useFileGeneration, useWebTitle, type Theme } from "./controls";
 import { StructuredPanel } from "./document-panel";
 import { ExternalFileAction } from "./external-file";
 import { messages } from "./messages";
@@ -13,6 +13,8 @@ import {
   type Contact, type Point, type Position, type ReaderLayout, type Size,
 } from "./pdf-geometry";
 import { bindWebGestures } from "./web";
+import { WorksheetPanel } from "./worksheet-panel";
+import { ZoomControls } from "./zoom-controls";
 
 const initialPosition: Position = { x: 0, y: 0, scale: 1 };
 type RenderPage = (page: number, pixels: number) => Promise<{ uri: string } | null>;
@@ -35,7 +37,9 @@ export function PdfPanel(props: PluginFilePanelProps) {
 
 export function OfficePanel(props: PluginFilePanelProps) {
   const render = useRpc(renderOfficePage);
-  return <PagedReader {...props} kind="office" render={(page, pixels) => render({ workspaceId: props.workspaceId, path: props.file.path, page, pixels })} />;
+  const print = <PagedReader {...props} kind="office" render={(page, pixels) =>
+    render({ workspaceId: props.workspaceId, path: props.file.path, page, pixels })} />;
+  return props.file.extension === "xlsx" ? <WorksheetPanel props={props} print={print} /> : print;
 }
 
 interface StoredView {
@@ -110,6 +114,7 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
   const web = platform === "web";
   const tabActive = (tab as typeof tab & { active?: boolean }).active !== false;
   const pageLabel = t(file.extension === "pptx" ? "slide" : "page");
+  const pageField = useWebTitle<TextInput>(pageLabel);
   const errorLabel = t(kind === "pdf" ? "pdfError" : "officeError");
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
   const [stored, setStored] = useState<StoredView>();
@@ -155,15 +160,16 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
     if (next.length && previous.length) update((current, dimensions) => moveContacts(current, previous, next, dimensions));
   }
 
-  const onZoom = (factor: number) => update((current, dimensions) => zoomAt(
-    current, boundZoom(current.scale * factor, current.scale),
+  const changeZoom = (resolve: (scale: number) => number) => update((current, dimensions) => zoomAt(
+    current, boundZoom(resolve(current.scale)),
     { x: viewport.width / 2, y: Math.min(viewport.height / 2, 120) }, dimensions,
   ));
+  const stepZoom = (factor: number) => changeZoom((scale) => scale * factor);
   const goTo = (target: number) => update((current, dimensions) =>
     jumpToPage(current, clamp(target, 1, dimensions.pageCount), dimensions));
   const fit = (width: boolean) => update((current, dimensions) => {
     const number = pageAt(dimensions, -current.y / current.scale);
-    const zoom = width ? viewport.width / pageBounds(dimensions, number).width : 1;
+    const zoom = width ? boundZoom(viewport.width / pageBounds(dimensions, number).width) : 1;
     return jumpToPage({ ...current, scale: zoom, x: (viewport.width - dimensions.width * zoom) / 2 }, number, dimensions);
   });
   const commitPage = () => {
@@ -177,7 +183,7 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
       contacts: track,
       scroll: (delta) => update((position, dimensions) =>
         constrain({ ...position, x: position.x - delta.x, y: position.y - delta.y }, dimensions)),
-      zoom: onZoom,
+      zoom: stepZoom,
       fit: () => fit(false),
     };
   });
@@ -199,13 +205,22 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
     });
   }, [web, enabled]);
 
-  if (kind === "office" && query.data === null) return <StructuredPanel {...props} />;
+  if (kind === "office" && query.data === null) {
+    if (file.extension !== "xlsx") return <StructuredPanel {...props} />;
+    return (
+      <View style={{ flex: 1 }}>
+        <Toolbar theme={theme}><ExternalFileAction {...props} /></Toolbar>
+        <Text style={{ padding: 12, color: theme.colors.foregroundMuted }}>{t("printLayoutUnavailable")}</Text>
+      </View>
+    );
+  }
   return (
     <View testID={`omni-${kind}-reader`} style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface1 }}>
       <Toolbar theme={theme}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-          <Control title="‹" label={t("previous")} disabled={page <= 1} onPress={() => goTo(page - 1)} theme={theme} compact={compact} />
+          <Control title={t("previous")} icon="ChevronLeft" disabled={page <= 1} onPress={() => goTo(page - 1)} theme={theme} compact={compact} />
           <TextInput
+            ref={pageField}
             accessibilityLabel={pageLabel}
             testID="omni-pdf-page-number"
             value={draft ?? String(page)}
@@ -224,18 +239,14 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
               paddingVertical: 0, width: pageCount > 999 ? 62 : 42, height: compact ? 36 : 28,
             }}
           />
-          {draft !== undefined && <Control title="↵" label={t("goToPage")} onPress={() => { commitPage(); Keyboard.dismiss(); }} theme={theme} compact={compact} />}
+          {draft !== undefined && <Control title={t("goToPage")} icon="CornerDownLeft" onPress={() => { commitPage(); Keyboard.dismiss(); }} theme={theme} compact={compact} />}
           <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>/ {pageCount || "…"}</Text>
-          <Control title="›" label={t("next")} disabled={page >= pageCount} onPress={() => goTo(page + 1)} theme={theme} compact={compact} />
+          <Control title={t("next")} icon="ChevronRight" disabled={page >= pageCount} onPress={() => goTo(page + 1)} theme={theme} compact={compact} />
         </View>
-        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 3 }}>
-          <Control title="−" label={t("zoomOut")} disabled={!position} onPress={() => onZoom(1 / 1.25)} theme={theme} compact={compact} />
-          <Text testID="omni-pdf-zoom" style={{ minWidth: 40, textAlign: "center", color: theme.colors.foregroundMuted, fontSize: 13 }}>
-            {position ? `${Math.round(scale * 100)}%` : "…"}
-          </Text>
-          <Control title="+" label={t("zoomIn")} disabled={!position} onPress={() => onZoom(1.25)} theme={theme} compact={compact} />
-          <Control title={t("fitWidth")} disabled={!position} onPress={() => fit(true)} theme={theme} compact={compact} />
-          <Control title={t("reset")} disabled={!position} onPress={() => fit(false)} theme={theme} compact={compact} />
+        <ZoomControls {...{ scale, theme, compact, stepZoom }} disabled={!position} setZoom={(scale) => changeZoom(() => scale)} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+          <Control title={t("fitWidth")} icon="MoveHorizontal" disabled={!position} onPress={() => fit(true)} theme={theme} compact={compact} />
+          <Control title={t("reset")} icon="Scan" disabled={!position} onPress={() => fit(false)} theme={theme} compact={compact} />
           <ExternalFileAction {...props} />
         </View>
       </Toolbar>

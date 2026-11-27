@@ -2,7 +2,7 @@ import type { ComponentType } from "react";
 import { Text, View } from "react-native";
 import { useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
-import { CloseButton } from "./controls";
+import { Control } from "./controls";
 import { messages } from "./messages";
 
 const readerIcon = {
@@ -28,7 +28,7 @@ export function fileReader(Reader: ComponentType<PluginFilePanelProps>) {
           <Icon icon={readerIcon} size={17} />
           <Text numberOfLines={1} accessibilityRole="header"
             style={{ flex: 1, color: theme.colors.foreground, fontSize: 13 }}>{file.name}</Text>
-          {!layout.compact && closeTab && <CloseButton label={t("closeReader")} onPress={closeTab} theme={theme} />}
+          {!layout.compact && closeTab && <Control icon="X" title={t("closeReader")} onPress={closeTab} theme={theme} compact />}
         </View>
         <Reader key={file.path} {...props} />
       </View>

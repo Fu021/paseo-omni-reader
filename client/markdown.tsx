@@ -9,7 +9,7 @@ import { formulaImageUri, formulasPerRequest, markdownKind, messageSchema, rende
 import { findFormulas, formulaKey, formulaTitlePattern, markdownParser } from "../shared/markdown-math";
 import { inlineMathMarker, inlineMathReferenceFontSize, readingBlocks, type InlineMath, type ReadingBlock } from "../shared/reading-blocks";
 import { readerSettings } from "../shared/reader-settings";
-import { CloseButton, Control, type Theme } from "./controls";
+import { Control, type Theme } from "./controls";
 import { assistantReplacement, assistantReplyKey, shouldReplaceAssistant, type AssistantReply } from "./assistant-turn";
 import { messages } from "./messages";
 import { NativeMarkdown } from "./native-markdown";
@@ -286,7 +286,7 @@ function FormulaActions({ formula: { tex, image }, theme, compact, close }: {
             <Text accessibilityRole="header" style={{
               flex: 1, color: theme.colors.foreground, fontWeight: "600",
             }}>{t("formulaActions")}</Text>
-            <CloseButton label={t("closeReader")} onPress={close} theme={theme} />
+            <Control icon="X" title={t("closeReader")} onPress={close} theme={theme} compact />
           </View>
           <NativeScrollView style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={{ gap: 8, padding: 12, paddingTop: 0 }}>
             <NativeScrollView horizontal nestedScrollEnabled testID="omni-formula-preview"

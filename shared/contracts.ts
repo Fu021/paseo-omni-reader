@@ -60,6 +60,30 @@ export const readStructuredDocument = defineRpc({
   output: z.object({ sections: z.array(documentSection), truncated: z.boolean() }),
 });
 
+const sheetCell = z.tuple([z.number(), z.number(), z.string(), z.number(), z.boolean()]);
+const worksheet = z.object({
+  columns: z.array(z.number()),
+  rows: z.array(z.number()),
+  styles: z.array(z.object({
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    color: z.string().optional(),
+    fill: z.string().optional(),
+    fontSize: z.number().optional(),
+    align: z.enum(["left", "center", "right"]).optional(),
+    wrap: z.boolean().optional(),
+  })),
+  cells: z.array(sheetCell),
+  merges: z.array(z.tuple([z.number(), z.number(), z.number(), z.number()])),
+  truncated: z.boolean(),
+});
+export type Worksheet = z.infer<typeof worksheet>;
+export const readWorksheet = defineRpc({
+  name: "office.worksheet",
+  input: fileTarget.extend({ sheet: z.number().int().min(0).max(255) }),
+  output: z.object({ names: z.array(z.string()), sheet: worksheet }),
+});
+
 export const formulaSchema = z.object({
   tex: z.string().min(1).max(maxFormulaLength),
   display: z.boolean(),

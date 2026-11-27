@@ -50,6 +50,17 @@ test("renders formatted Word, Excel and PowerPoint previews", { timeout: 120_000
           profile, "--headless", "--convert-to", format, "--outdir", folder, input,
         ], { timeout: 25_000 });
         const path = join(folder, `report.${extension}`);
+        if (extension === "xlsx") {
+          const workbook = await engine.dispatch({ kind: "worksheet", root: folder, path, sheet: 0 });
+          assert.equal(workbook.names.length, 1);
+          assert.equal(workbook.sheet.truncated, false);
+          assert.equal(workbook.sheet.columns.length, 2);
+          assert.equal(workbook.sheet.rows.length, 3);
+          assert.deepEqual(workbook.sheet.cells.map(([row, column, text, _style, numeric]) => [row, column, text, numeric]), [
+            [0, 0, "Quarter", false], [0, 1, "Sales", false], [1, 0, "Q1", false],
+            [1, 1, "125", true], [2, 0, "Q2", false], [2, 1, "350", true],
+          ]);
+        }
         const layout = await office.layout(folder, path);
         assert.equal(layout?.reduce((count, group) => count + group.count, 0), pages);
         const first = await office.page(folder, path, 1, 640);

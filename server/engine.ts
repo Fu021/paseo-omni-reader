@@ -71,7 +71,7 @@ export function createEngine() {
   const math = createWorkerQueue(mathWorker);
   const document = createWorkerQueue(documentWorker);
   const office = createWorkerQueue(documentWorker);
-  const queues = { math, document, pdf: document, "pdf-layout": document, office, "office-layout": office };
+  const queues = { math, document, pdf: document, "pdf-layout": document, office, "office-layout": office, worksheet: office };
   return {
     dispatch: <Request extends EngineRequest>(request: Request) =>
       queues[request.kind].dispatch(request),

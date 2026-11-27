@@ -2,10 +2,14 @@ import { spawn } from "node:child_process";
 import { markdownExtensions, officeExtensions } from "../shared/contracts";
 import { withWorkspaceFile } from "./workspace-file";
 
-function launch(command: string, args: string[], env = process.env): Promise<void> {
+function launch(command: string, args: string[], options?: NodeJS.ProcessEnv): Promise<void> {
+  const env = { ...process.env, ...options };
+  for (const key of [
+    "ELECTRON_RUN_AS_NODE", "ELECTRON_NO_ATTACH_CONSOLE", "PASEO_DESKTOP_MANAGED", "PASEO_SUPERVISED", "PASEO_NODE_ENV",
+  ]) delete env[key];
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { env, stdio: "ignore", detached: true, windowsHide: true });
-    const settle = setTimeout(resolve, 1_500);
+    const settle = setTimeout(() => reject(new Error("The system did not confirm opening the file.")), 10_000);
     child.unref();
     child.once("error", (error) => {
       clearTimeout(settle);
@@ -29,7 +33,7 @@ export async function openWithDefaultApp(directory: string, path: string) {
       return launch("powershell.exe", [
         "-NoProfile", "-NonInteractive", "-Command",
         "Invoke-Item -LiteralPath $env:PASEO_OMNI_READER_FILE -ErrorAction Stop",
-      ], { ...process.env, PASEO_OMNI_READER_FILE: target });
+      ], { PASEO_OMNI_READER_FILE: target });
     case "linux":
       return launch("gio", ["open", target]).catch(() => launch("xdg-open", [target]));
     default:

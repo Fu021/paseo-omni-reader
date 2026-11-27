@@ -23,6 +23,9 @@ export interface ReaderLayout {
 export const clamp = (value: number, minimum: number, maximum: number) =>
   Math.max(minimum, Math.min(maximum, value));
 
+export const minZoomPercent = 25;
+export const maxZoomPercent = 400;
+
 export function fitPages(sizes: PageRun[], viewport: Size): ReaderLayout {
   let firstPage = 1;
   let top = 0;
@@ -87,8 +90,8 @@ export function zoomAt(position: Position, scale: number, anchor: Point, layout:
   }, layout);
 }
 
-export function boundZoom(scale: number, previous: number) {
-  return clamp(scale, 0.25, Math.max(6, previous));
+export function boundZoom(scale: number) {
+  return clamp(scale, minZoomPercent / 100, maxZoomPercent / 100);
 }
 
 function midpoint(contacts: Contact[]): Point {
@@ -106,7 +109,7 @@ export function moveContacts(position: Position, previous: Contact[], next: Cont
   }
   const before = midpoint(previous);
   const after = midpoint(next);
-  const scale = boundZoom(position.scale * distance(next) / distance(previous), position.scale);
+  const scale = boundZoom(position.scale * distance(next) / distance(previous));
   const ratio = scale / position.scale;
   return constrain({
     scale,

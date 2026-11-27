@@ -3,6 +3,7 @@ import type { Formula, FormulaPlatform } from "../shared/contracts";
 import type { rasterizeFormulas } from "./math-engine";
 import type { inspectPdf, rasterizePdf } from "./pdf-engine";
 import type { loadStructuredDocument } from "./structured-document";
+import type { loadWorksheet } from "./worksheet";
 
 declare const __OMNI_MATH_WORKER__: boolean;
 
@@ -12,7 +13,8 @@ export type EngineRequest =
   | { kind: "office"; key: string; data: Uint8Array; page: number; pixels: number }
   | { kind: "pdf-layout"; root: string; path: string }
   | { kind: "office-layout"; key: string; data: Uint8Array }
-  | { kind: "document"; root: string; path: string };
+  | { kind: "document"; root: string; path: string }
+  | { kind: "worksheet"; root: string; path: string; sheet: number };
 
 export interface EngineResults {
   math: Awaited<ReturnType<typeof rasterizeFormulas>>;
@@ -21,6 +23,7 @@ export interface EngineResults {
   "pdf-layout": Awaited<ReturnType<typeof inspectPdf>>;
   "office-layout": EngineResults["pdf-layout"];
   document: Awaited<ReturnType<typeof loadStructuredDocument>>;
+  worksheet: Awaited<ReturnType<typeof loadWorksheet>>;
 }
 
 export type EngineResponse =
@@ -48,6 +51,9 @@ parentPort?.on("message", async (request: EngineRequest) => {
     } else if (request.kind === "document") {
       const { loadStructuredDocument } = await import("./structured-document");
       result = await loadStructuredDocument(request.root, request.path);
+    } else if (request.kind === "worksheet") {
+      const { loadWorksheet } = await import("./worksheet");
+      result = await loadWorksheet(request.root, request.path, request.sheet);
     } else {
       throw new Error("Invalid document request.");
     }

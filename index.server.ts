@@ -1,7 +1,7 @@
 import { extname } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
-  openWorkspaceFile, readDocumentLayout, readMarkdownPage, readStructuredDocument, renderFormulas, renderOfficePage, renderPdfPage,
+  openWorkspaceFile, readDocumentLayout, readMarkdownPage, readStructuredDocument, readWorksheet, renderFormulas, renderOfficePage, renderPdfPage,
 } from "./shared/contracts";
 import { readerSettings } from "./shared/reader-settings";
 import { createEngine } from "./server/engine";
@@ -38,6 +38,9 @@ export default function contribute(server: PluginServerContext) {
   );
   server.handle(readStructuredDocument, async ({ workspaceId, path }, { paseo }) =>
     engine.dispatch({ kind: "document", root: await workspaceDirectory(paseo, workspaceId), path }),
+  );
+  server.handle(readWorksheet, async ({ workspaceId, path, sheet }, { paseo }) =>
+    engine.dispatch({ kind: "worksheet", root: await workspaceDirectory(paseo, workspaceId), path, sheet }),
   );
   return () => {
     office.stop();

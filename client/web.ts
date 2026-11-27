@@ -21,6 +21,31 @@ export function downloadLocalFile(url: string, name: string) {
   anchor.remove();
 }
 
+export function setWebTitle(node: unknown, title: string) {
+  if (!(node instanceof HTMLElement)) return;
+  node.title = title;
+  return () => node.removeAttribute("title");
+}
+
+export function bindWebSliderKeys(node: unknown, change: (value: number) => void) {
+  if (!(node instanceof HTMLElement)) return;
+  const keydown = (event: KeyboardEvent) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const value = Number(node.getAttribute("aria-valuenow"));
+    switch (event.key) {
+      case "ArrowDown": case "ArrowLeft": change(value - 5); break;
+      case "ArrowUp": case "ArrowRight": change(value + 5); break;
+      case "Home": change(Number(node.getAttribute("aria-valuemin"))); break;
+      case "End": change(Number(node.getAttribute("aria-valuemax"))); break;
+      default: return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  node.addEventListener("keydown", keydown);
+  return () => node.removeEventListener("keydown", keydown);
+}
+
 export function bindWebFormulas(node: unknown, actions: {
   copy: (tex: string) => void; colors: () => Pick<Theme["colors"], "foreground" | "surface2" | "border">;
 }) {
