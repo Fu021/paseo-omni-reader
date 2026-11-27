@@ -9,10 +9,9 @@ function workspaceDestination(source: string, root: string, directory: string): 
   const route = hash === -1 ? target : target.slice(0, hash);
   if (route.includes("?")) return;
   const lines = /:\d+(?:-\d+|:\d+)?$/.exec(route)?.[0] ?? "";
-  const pathname = route.slice(0, route.length - lines.length);
   let decoded: string;
   try {
-    decoded = decodeURIComponent(pathname);
+    decoded = decodeURIComponent(route.slice(0, route.length - lines.length));
   } catch {
     return;
   }

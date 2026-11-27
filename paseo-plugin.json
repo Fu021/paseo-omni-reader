@@ -7,9 +7,11 @@
     "assets/chat-en.png",
     "assets/markdown-en.png",
     "assets/pdf-en.png",
+    "assets/office-en.png",
     "assets/chat-zh-CN.png",
     "assets/markdown-zh-CN.png",
-    "assets/pdf-zh-CN.png"
+    "assets/pdf-zh-CN.png",
+    "assets/office-zh-CN.png"
   ],
   "translations": {
     "zh-CN": {
@@ -17,6 +19,6 @@
       "description": "在 Paseo 中流式阅读 LaTeX，预览工作区文档与表格，缩放和平移 PDF。"
     }
   },
-  "requirements": { "paseo": ">=0.17.4" },
+  "requirements": { "paseo": ">=0.17.5" },
   "build": [["npm", "ci", "--include=dev", "--ignore-scripts"], ["npm", "run", "build"]]
 }

@@ -4,33 +4,33 @@
 
 [简体中文](README.zh-CN.md)
 
-Omni Reader adds LaTeX to streaming assistant replies and read-only previews for workspace files, from Markdown notes and spreadsheets to PDFs.
+Omni Reader adds LaTeX to streaming assistant replies and read-only previews for Markdown, PDF, Word, Excel and PowerPoint.
 
 ![Paseo assistant reply with an inline fraction, a formula table, a centered equation, and links to notes and a PDF](assets/chat-en.png)
 
 ## What you can read
 
-- **Assistant replies.** Complete formulas render during streaming. Inline fractions have room to show their numerator and denominator, standalone equations are centered, and wide tables and long code scroll horizontally. Hover to see LaTeX or click to copy in a browser. Touch and hold any formula in the native app to see or copy its source.
-- **Workspace documents.** Switch Markdown between preview and source, or keep reading large UTF-8 files as sections load. Relative links in a Markdown preview resolve from the document’s folder. Links such as `example.ts#L31` use Paseo’s line navigation. Preview Word paragraphs and tables, Excel worksheets, PowerPoint slide text, CSV and TSV tables, HTML, SVG, and common images.
-- **PDFs.** Drag a page with a mouse or pinch and pan in the native full-screen reader. Jump to a page, fit the page width or restore 100% zoom.
-- **External editing.** **Open externally** downloads a copy in a browser or shares a copy with another app on iOS and Android. On Android builds where the share sheet is unavailable, use **Download** from Paseo’s file menu. Preview panels are read-only.
+- **Assistant replies.** Complete formulas render during streaming. Inline fractions have room to show their numerator and denominator, and standalone equations are centered. Tables size their columns to their content and center when they fit. Wide tables and long code scroll horizontally. Hover to see LaTeX or click to copy in a browser. Touch and hold any formula in the native app to see or copy its source. Use **Restore original reply** below an enhanced reply to return to Paseo’s Markdown. **Resume rendering** appears in the same spot. Paseo provides the turn footer in both views. Inline and display formulas follow Paseo’s content font size. Choose a separate size preset from 50% to 200% for each in the plugin settings.
+- **Workspace files.** Open Markdown, `.pdf`, `.docx`, `.xlsx`, and `.pptx` from chat links or the file tree. Paseo’s **Open location** settings let you choose the main panel or side pane separately for chat links and file tree selections. Phones use Paseo’s file preview sheet. Markdown uses the same formula settings as chat, supports preview/source switching, and loads large documents as you read.
+- **Continuous pages.** PDF and formatted Office pages stack vertically. At 100%, each entire page fits the preview with either its width or height filling the available space. Scroll with the mouse wheel and drag to pan. Click the preview and press `+`, `-`, or `0` to zoom in, zoom out, or fit the page. The toolbar also offers zoom, fit width and page navigation. On native clients, pinch to zoom and pan with one finger.
+- **External editing.** In Paseo Desktop, **Open externally** opens the original file in the system’s default app when the workspace is on the local daemon. Browsers and remote desktop workspaces download a copy. On iOS and Android, the action hands a copy to the system share sheet. On Android builds where sharing is unavailable, use **Download** from Paseo’s file menu.
 
-| Markdown preview | PDF reader |
+| PDF reader | Office preview |
 | --- | --- |
-| ![Workspace Markdown with a centered formula and a Preview / Source control](assets/markdown-en.png) | ![PDF sample report with page navigation and zoom controls](assets/pdf-en.png) |
+| ![PDF sample report with page navigation and zoom controls](assets/pdf-en.png) | ![PowerPoint preview with a bar chart and an embedded image](assets/office-en.png) |
 
 ## Install from GitHub
 
-Use Paseo 0.17.4 or newer on the client and daemon. The daemon host needs Node.js 22 or newer and npm for Git installation.
+Use Paseo 0.17.5 or newer on the client and daemon. The daemon host needs Node.js 22 or newer and npm for Git installation.
 
 ```sh
 paseo plugin install github:Fu021/paseo-omni-reader
 ```
 
-In Paseo, select the Omni Reader panel in **Open with** and remember the choice on each client. Plugin controls are in Simplified Chinese when Paseo uses Simplified Chinese, and in English for other locales.
+Paseo opens the preview directly when Omni Reader is the only available viewer. If Paseo asks about Markdown, choose Omni Reader and remember the choice. On mobile, the file preview uses Paseo’s close button. Plugin controls are in Simplified Chinese when Paseo uses Simplified Chinese, and in English for other locales.
 
 ## Data and limits
 
-The Paseo daemon reads files inside the active workspace and sends rendered content to the connected client. The plugin uses no external rendering service. PDF previews support files up to 128 MiB. Structured Office and CSV previews accept files up to 24 MiB and show a limited number of pages, rows and cells. Failed formulas keep their source and offer a retry.
+The Paseo daemon reads files inside the active workspace and sends rendered content to the connected client. Install LibreOffice Writer, Calc, and Impress on that host to see formatting, images, charts, and pagination in Office previews. The browser and native apps display the same read-only pages. Without LibreOffice, Office files open in a basic text and table preview. PDF previews accept files up to 128 MiB and Office previews accept files up to 24 MiB. Failed formulas keep their source and offer a retry.
 
-For development, run `npm ci --ignore-scripts`, `npm run typecheck`, and `npm test`. See the marketplace overviews in [English](OVERVIEW.md) and [简体中文](OVERVIEW.zh-CN.md).
+For development, run `npm ci --include=dev --ignore-scripts`, `npm run typecheck`, `npm test`, and `npm run check:package`. With LibreOffice Writer, Calc and Impress installed, run `npm run test:office` to test formatted Office previews. GitHub Actions runs these checks on Linux with Node.js 22 and 24, with LibreOffice on Node.js 24. See the marketplace overviews in [English](OVERVIEW.md) and [简体中文](OVERVIEW.zh-CN.md).

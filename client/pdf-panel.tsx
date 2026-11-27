@@ -1,14 +1,22 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Image, Keyboard, Modal, SafeAreaView, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from "react-native";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Image, Keyboard, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
 import { Loading } from "@getpaseo/plugin/client/ui";
-import { renderPdfPage } from "../shared/contracts";
-import { Control, ReadError, Toolbar, useFileGeneration } from "./controls";
+import { readDocumentLayout, renderOfficePage, renderPdfPage } from "../shared/contracts";
+import { Control, ReadError, Toolbar, useFileGeneration, type Theme } from "./controls";
+import { StructuredPanel } from "./document-panel";
 import { ExternalFileAction } from "./external-file";
 import { messages } from "./messages";
-import { clamp, constrain, moveContacts, widthScale, zoomAt, type Contact, type Point, type Position, type Size } from "./pdf-geometry";
+import {
+  boundZoom, clamp, constrain, fitPages, jumpToPage, moveContacts, pageAt, pageBounds, zoomAt,
+  type Contact, type Point, type Position, type ReaderLayout, type Size,
+} from "./pdf-geometry";
 import { bindWebGestures } from "./web";
+
+const initialPosition: Position = { x: 0, y: 0, scale: 1 };
+type RenderPage = (page: number, pixels: number) => Promise<{ uri: string } | null>;
+type ReaderKind = "pdf" | "office";
 
 function quality(width: number) {
   return clamp(Math.ceil(width / 256) * 256, 256, 2560);
@@ -21,188 +29,228 @@ function nativeContacts(event: GestureResponderEvent, origin: Point): Contact[] 
 }
 
 export function PdfPanel(props: PluginFilePanelProps) {
-  return props.layout.platform === "web" ? <PdfReader key={props.file.path} {...props} />
-    : <NativePdfPanel key={props.file.path} {...props} />;
+  const render = useRpc(renderPdfPage);
+  return <PagedReader {...props} kind="pdf" render={(page, pixels) => render({ workspaceId: props.workspaceId, path: props.file.path, page, pixels })} />;
 }
 
-function NativePdfPanel(props: PluginFilePanelProps) {
-  const { t } = useTranslation(messages);
-  const [open, setOpen] = useState(true);
-  const close = () => setOpen(false);
-  const { file, theme, layout: { compact } } = props;
+export function OfficePanel(props: PluginFilePanelProps) {
+  const render = useRpc(renderOfficePage);
+  return <PagedReader {...props} kind="office" render={(page, pixels) => render({ workspaceId: props.workspaceId, path: props.file.path, page, pixels })} />;
+}
+
+interface StoredView {
+  version: string;
+  geometry: ReaderLayout;
+  position: Position;
+}
+
+function resolvePosition(stored: StoredView | undefined, version: string, geometry: ReaderLayout) {
+  if (!stored || stored.version !== version) return constrain(initialPosition, geometry);
+  if (stored.geometry === geometry) return stored.position;
+  const { position, geometry: previous } = stored;
+  const previousTop = -position.y / position.scale;
+  const number = pageAt(previous, previousTop);
+  const previousPage = pageBounds(previous, number);
+  const page = pageBounds(geometry, Math.min(number, geometry.pageCount));
+  const fraction = (previousTop - previousPage.top) / previousPage.height;
+  return constrain({ ...position, y: -(page.top + page.height * fraction) * position.scale }, geometry);
+}
+
+function PageImage({ number, kind, label, errorLabel, retryLabel, render, fileKey, bounds, position, trackWidth, pixels, theme, compact }: {
+  number: number;
+  kind: ReaderKind;
+  label: string;
+  errorLabel: string;
+  retryLabel: string;
+  render: RenderPage;
+  fileKey: readonly unknown[];
+  bounds: Size & { top: number };
+  position: Position;
+  trackWidth: number;
+  pixels: number;
+  theme: Theme;
+  compact: boolean;
+}) {
+  const result = useQuery({
+    queryKey: [...fileKey, "page", number, pixels],
+    queryFn: () => render(number, pixels),
+    placeholderData: (previous) => previous ?? undefined,
+    staleTime: Infinity,
+    gcTime: 15_000,
+    retry: (count, error) => count === 0 && error.message.includes("Reader is busy"),
+  });
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
-      <Toolbar theme={theme}>
-        <Control title={t("openPdf")} onPress={() => setOpen(true)} theme={theme} compact={compact} />
-        <ExternalFileAction file={file} theme={theme} compact={compact} />
-      </Toolbar>
-      <Text style={{ color: theme.colors.foreground, padding: 16 }}>{file.name}</Text>
-      <Modal visible={open} presentationStyle="fullScreen" supportedOrientations={["portrait", "landscape"]}
-        hardwareAccelerated onRequestClose={close}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
-          <PdfReader {...props} onClose={close} />
-        </SafeAreaView>
-      </Modal>
+    <View style={{
+      position: "absolute", left: position.x + (trackWidth - bounds.width) * position.scale / 2,
+      top: position.y + bounds.top * position.scale, width: bounds.width * position.scale,
+      height: bounds.height * position.scale,
+      backgroundColor: result.data ? "#ffffff" : theme.colors.surface0,
+    }}>
+      {result.data ? (
+        <View pointerEvents="none" style={{ flex: 1 }}>
+          <Image testID={`omni-${kind}-page`} accessible accessibilityRole="image" accessibilityLabel={label}
+            source={{ uri: result.data.uri }} resizeMode="stretch" resizeMethod="scale" fadeDuration={0}
+            style={{ width: "100%", height: "100%" }} />
+        </View>
+      ) : result.isPending ? <Loading /> : (
+        <ReadError theme={theme} compact={compact} label={errorLabel} error={result.error}
+          retry={retryLabel} onRetry={() => { void result.refetch(); }} />
+      )}
     </View>
   );
 }
 
-function PdfReader({ file, workspaceId, host, layout, theme, onClose }: PluginFilePanelProps & { onClose?: () => void }) {
+function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: RenderPage }) {
+  const { file, workspaceId, host, layout, theme, kind, render, tab } = props;
   const generation = useFileGeneration(file);
-  const rpc = useRpc(renderPdfPage);
+  const readLayout = useRpc(readDocumentLayout);
   const { t } = useTranslation(messages);
   const { scale: pixelRatio } = useWindowDimensions();
   const { compact, platform } = layout;
   const web = platform === "web";
+  const tabActive = (tab as typeof tab & { active?: boolean }).active !== false;
+  const pageLabel = t(file.extension === "pptx" ? "slide" : "page");
+  const errorLabel = t(kind === "pdf" ? "pdfError" : "officeError");
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
-  const [page, setPage] = useState(1);
-  const [number, setNumber] = useState("1");
-  const [pageCount, setPageCount] = useState(0);
-  const [requested, setRequested] = useState<{ key: string; width: number }>();
-  const [position, setPosition] = useState<{ key: string; value: Position }>();
+  const [stored, setStored] = useState<StoredView>();
+  const [draft, setDraft] = useState<string>();
+  const [rasterScale, setRasterScale] = useState(1);
   const viewportRef = useRef<View>(null);
   const pointers = useRef<Contact[]>([]);
   const touchOrigin = useRef<Point>({ x: 0, y: 0 });
   const operations = useRef<Parameters<typeof bindWebGestures>[1] | null>(null);
-  const active = useRef<Position | null>(null);
+  const current = useRef<Position | null>(null);
 
-  const fileVersion = `${file.modifiedAt}:${generation}`;
-  const viewKey = `${fileVersion}:${page}:${viewport.width}`;
-  const pixels = requested?.key === viewKey ? requested.width : quality(viewport.width * Math.min(2, pixelRatio));
+  const version = `${file.modifiedAt}:${generation}`;
+  const fileKey = ["omni-reader", kind, host.id, workspaceId, file.path, version];
   const query = useQuery({
-    queryKey: ["omni-reader", "pdf", host.id, workspaceId, file.path, fileVersion, page, pixels],
-    queryFn: () => rpc({ workspaceId, path: file.path, page, pixels }),
-    enabled: viewport.width > 0,
-    placeholderData: (previous, source) =>
-      source?.queryKey[5] === fileVersion && source.queryKey[6] === page ? previous : undefined,
+    queryKey: [...fileKey, "layout"],
+    queryFn: () => readLayout({ workspaceId, path: file.path }),
     staleTime: Infinity,
-    gcTime: 20_000,
+    gcTime: 30_000,
     retry: false,
   });
-  const image = query.data;
-  const size: Size | null = image && viewport.width > 0
-    ? { width: image.width, height: image.height }
-    : null;
-  const fit = size ? widthScale(size, viewport) : 1;
-  const visible = size
-    ? constrain(position?.key === viewKey ? position.value : { x: 0, y: 0, scale: fit }, size, viewport)
-    : null;
+  const geometry = useMemo(() => query.data && viewport.width > 0 && viewport.height > 0
+    ? fitPages(query.data, viewport)
+    : null, [query.data, viewport]);
+  const position = geometry ? resolvePosition(stored, version, geometry) : null;
+  const scale = position?.scale ?? 1;
+  const page = geometry && position ? pageAt(geometry, -position.y / scale) : 1;
+  const pageCount = geometry?.pageCount ?? 0;
+  const enabled = tabActive && !!position;
+  const top = position ? -position.y / scale : 0;
+  const first = geometry ? Math.max(1, page - 1) : 1;
+  const last = geometry ? Math.min(pageCount, pageAt(geometry, top + viewport.height / scale) + 1, first + 19) : 0;
 
-  const goTo = (target: number) => {
-    const next = clamp(target, 1, pageCount || 1);
-    setPage(next);
-    setNumber(String(next));
-  };
-  const commitPage = () => goTo(/^\d+$/.test(number) ? Number(number) : page);
-
-  useEffect(() => {
-    if (!image) return;
-    setPageCount(image.pages);
-    if (image.page !== page) {
-      setPage(image.page);
-      setNumber(String(image.page));
-    }
-  }, [image?.page, image?.pages, page]);
-
-  const renderedWidth = size && visible ? size.width * visible.scale : viewport.width;
-  const wanted = quality(renderedWidth * Math.min(2, pixelRatio));
-  useEffect(() => {
-    if (!renderedWidth || wanted === pixels) return;
-    const timeout = setTimeout(() => setRequested({ key: viewKey, width: wanted }), 180);
-    return () => clearTimeout(timeout);
-  }, [pixels, renderedWidth, viewKey, wanted]);
-
-  function update(convert: (current: Position, dimensions: Size) => Position) {
-    if (!active.current || !size) return;
-    const value = convert(active.current, size);
-    active.current = value;
-    setPosition({ key: viewKey, value });
+  function update(convert: (position: Position, geometry: ReaderLayout) => Position) {
+    if (!current.current || !geometry) return;
+    const next = convert(current.current, geometry);
+    current.current = next;
+    setStored({ version, geometry, position: next });
   }
 
   function track(next: Contact[]) {
     const previous = pointers.current;
     pointers.current = next;
-    if (next.length && previous.length) {
-      update((current, dimensions) => moveContacts(current, previous, next, dimensions, viewport));
-    }
+    if (next.length && previous.length) update((current, dimensions) => moveContacts(current, previous, next, dimensions));
   }
 
-  const zoom = (factor: number, anchor: Point = { x: viewport.width / 2, y: viewport.height / 2 }) =>
-    update((current, dimensions) => zoomAt(current, current.scale * factor, anchor, dimensions, viewport));
+  const onZoom = (factor: number) => update((current, dimensions) => zoomAt(
+    current, boundZoom(current.scale * factor, current.scale),
+    { x: viewport.width / 2, y: Math.min(viewport.height / 2, 120) }, dimensions,
+  ));
+  const goTo = (target: number) => update((current, dimensions) =>
+    jumpToPage(current, clamp(target, 1, dimensions.pageCount), dimensions));
+  const fit = (width: boolean) => update((current, dimensions) => {
+    const number = pageAt(dimensions, -current.y / current.scale);
+    const zoom = width ? viewport.width / pageBounds(dimensions, number).width : 1;
+    return jumpToPage({ ...current, scale: zoom, x: (viewport.width - dimensions.width * zoom) / 2 }, number, dimensions);
+  });
+  const commitPage = () => {
+    if (draft && /^\d+$/.test(draft)) goTo(Number(draft));
+    setDraft(undefined);
+  };
 
   useLayoutEffect(() => {
-    active.current = visible;
+    current.current = position;
     operations.current = {
       contacts: track,
-      scroll: ({ x, y }) => update((current, dimensions) => constrain({
-        ...current, x: current.x + x, y: current.y + y,
-      }, dimensions, viewport)),
-      zoom,
+      scroll: (delta) => update((position, dimensions) =>
+        constrain({ ...position, x: position.x - delta.x, y: position.y - delta.y }, dimensions)),
+      zoom: onZoom,
+      fit: () => fit(false),
     };
   });
   useEffect(() => {
-    pointers.current = [];
-  }, [viewKey]);
+    if (rasterScale === scale) return;
+    const timeout = setTimeout(() => setRasterScale(scale), 150);
+    return () => clearTimeout(timeout);
+  }, [rasterScale, scale]);
   useEffect(() => {
-    if (!web) return;
+    pointers.current = [];
+  }, [enabled, version]);
+  useEffect(() => {
+    if (!web || !enabled) return;
     return bindWebGestures(viewportRef.current, {
       contacts: (contacts) => operations.current?.contacts(contacts),
       scroll: (delta) => operations.current?.scroll(delta),
-      zoom: (factor, anchor) => operations.current?.zoom(factor, anchor),
+      zoom: (factor) => operations.current?.zoom(factor),
+      fit: () => operations.current?.fit(),
     });
-  }, [web]);
+  }, [web, enabled]);
 
-  const hasImage = !!(image && visible);
+  if (kind === "office" && query.data === null) return <StructuredPanel {...props} />;
   return (
-    <View testID="omni-pdf-reader" style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface1 }}>
+    <View testID={`omni-${kind}-reader`} style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface1 }}>
       <Toolbar theme={theme}>
-        {onClose && <Control title={t("closePdf")} onPress={onClose} theme={theme} compact={compact} />}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
           <Control title="‹" label={t("previous")} disabled={page <= 1} onPress={() => goTo(page - 1)} theme={theme} compact={compact} />
           <TextInput
-            accessibilityLabel={t("page")}
+            accessibilityLabel={pageLabel}
             testID="omni-pdf-page-number"
-            value={number}
+            value={draft ?? String(page)}
             maxLength={7}
             inputMode="numeric"
             keyboardType="number-pad"
             returnKeyType="go"
             selectTextOnFocus
-            onChangeText={setNumber}
+            onChangeText={setDraft}
             onSubmitEditing={commitPage}
             onBlur={commitPage}
             editable={!!pageCount}
             style={{
               color: theme.colors.foreground, borderColor: theme.colors.border,
               borderWidth: 1, borderRadius: 5, textAlign: "center", paddingHorizontal: 4,
-              paddingVertical: 0, minWidth: pageCount > 999 ? 52 : 38, height: compact ? 36 : 28,
+              paddingVertical: 0, width: pageCount > 999 ? 62 : 42, height: compact ? 36 : 28,
             }}
           />
-          {number !== String(page) && <Control title="↵" label={t("goToPage")} onPress={() => { commitPage(); Keyboard.dismiss(); }} theme={theme} compact={compact} />}
+          {draft !== undefined && <Control title="↵" label={t("goToPage")} onPress={() => { commitPage(); Keyboard.dismiss(); }} theme={theme} compact={compact} />}
           <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>/ {pageCount || "…"}</Text>
           <Control title="›" label={t("next")} disabled={page >= pageCount} onPress={() => goTo(page + 1)} theme={theme} compact={compact} />
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 3 }}>
-          <Control title="−" label={t("zoomOut")} disabled={!hasImage} onPress={() => zoom(1 / 1.25)} theme={theme} compact={compact} />
+          <Control title="−" label={t("zoomOut")} disabled={!position} onPress={() => onZoom(1 / 1.25)} theme={theme} compact={compact} />
           <Text testID="omni-pdf-zoom" style={{ minWidth: 40, textAlign: "center", color: theme.colors.foregroundMuted, fontSize: 13 }}>
-            {visible ? `${Math.round(visible.scale * 100)}%` : "…"}
+            {position ? `${Math.round(scale * 100)}%` : "…"}
           </Text>
-          <Control title="+" label={t("zoomIn")} disabled={!hasImage} onPress={() => zoom(1.25)} theme={theme} compact={compact} />
-          <Control title={t("fitWidth")} disabled={!hasImage} onPress={() => update((_, dimensions) => constrain({ x: 0, y: 0, scale: fit }, dimensions, viewport))} theme={theme} compact={compact} />
-          <Control title={t("reset")} disabled={!hasImage} onPress={() => update((_, dimensions) => constrain({ x: 0, y: 0, scale: 1 }, dimensions, viewport))} theme={theme} compact={compact} />
-          <ExternalFileAction file={file} theme={theme} compact={compact} />
+          <Control title="+" label={t("zoomIn")} disabled={!position} onPress={() => onZoom(1.25)} theme={theme} compact={compact} />
+          <Control title={t("fitWidth")} disabled={!position} onPress={() => fit(true)} theme={theme} compact={compact} />
+          <Control title={t("reset")} disabled={!position} onPress={() => fit(false)} theme={theme} compact={compact} />
+          <ExternalFileAction {...props} />
         </View>
       </Toolbar>
       <View
         ref={viewportRef}
-        testID="omni-pdf-viewport"
+        testID={`omni-${kind}-viewport`}
+        accessibilityLabel={t("documentPages")}
+        tabIndex={web && enabled ? 0 : undefined}
         onLayout={({ nativeEvent: { layout: bounds } }) => setViewport((previous) =>
           bounds.width === previous.width && bounds.height === previous.height
             ? previous
             : { width: bounds.width, height: bounds.height },
         )}
-        onStartShouldSetResponder={web ? undefined : () => hasImage}
-        onMoveShouldSetResponder={web ? undefined : () => hasImage}
+        onStartShouldSetResponder={web ? undefined : () => enabled}
+        onMoveShouldSetResponder={web ? undefined : () => enabled}
         onResponderGrant={web ? undefined : (event) => {
           const { pageX, pageY, locationX, locationY } = event.nativeEvent;
           touchOrigin.current = { x: pageX - locationX, y: pageY - locationY };
@@ -217,29 +265,17 @@ function PdfReader({ file, workspaceId, host, layout, theme, onClose }: PluginFi
           web && ({ touchAction: "none", userSelect: "none" } as ViewStyle),
         ]}
       >
-        {image && size && visible ? (
-          <View
-            pointerEvents="none"
-            style={{
-              position: "absolute", left: 0, top: 0,
-              width: size.width * visible.scale, height: size.height * visible.scale,
-              transform: [{ translateX: visible.x }, { translateY: visible.y }],
-            }}
-          >
-            <Image
-              testID="omni-pdf-page"
-              accessible
-              accessibilityRole="image"
-              accessibilityLabel={`${t("page")} ${image.page}`}
-              source={{ uri: image.uri }}
-              resizeMode="stretch"
-              resizeMethod="scale"
-              fadeDuration={0}
-              style={{ backgroundColor: "#ffffff", width: "100%", height: "100%" }}
-            />
-          </View>
-        ) : query.isError ? (
-          <ReadError theme={theme} compact={compact} label={t("pdfError")} error={query.error} retry={t("retry")} onRetry={() => { void query.refetch(); }} />
+        {geometry && position ? Array.from({ length: last - first + 1 }, (_, index) => {
+          const number = first + index;
+          const bounds = pageBounds(geometry, number);
+          return <PageImage key={`${version}:${number}`} {...{
+            number, kind, fileKey, render, bounds, position, theme, compact, errorLabel,
+            label: `${pageLabel} ${number}`, retryLabel: t("retry"), trackWidth: geometry.width,
+            pixels: quality(bounds.width * rasterScale * Math.min(2, pixelRatio)),
+          }} />;
+        }) : query.isError ? (
+          <ReadError theme={theme} compact={compact} label={errorLabel} error={query.error}
+            retry={t("retry")} onRetry={() => { void query.refetch(); }} />
         ) : <Loading />}
       </View>
     </View>

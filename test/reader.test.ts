@@ -4,12 +4,65 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { findFormulas, formulaKey } from "../shared/markdown-math";
+import { assistantReplacement, shouldReplaceAssistant } from "../client/assistant-turn";
+import { messageSchema } from "../shared/contracts";
+import { readerSettings } from "../shared/reader-settings";
 import { inlineMathMarker, readingBlocks, type InlineMath } from "../shared/reading-blocks";
 import { shareAndroidFile } from "../client/android-file-share";
-import { constrain, moveContacts } from "../client/pdf-geometry";
+import { constrain, fitPages, jumpToPage, moveContacts, pageAt, pageBounds, zoomAt } from "../client/pdf-geometry";
 import { createEngine } from "../server/engine";
-import { loadTextPage, textPageBytes } from "../server/text-page";
+import { openWithDefaultApp } from "../server/external-file";
+import { rasterizePdf } from "../server/pdf-engine";
+import { loadMarkdownPage, markdownPageBytes } from "../server/markdown-page";
 import { makeLargePdf } from "./pdf-fixture";
+
+test("claims assistant messages only when Omni Reader can enhance them", () => {
+  assert.equal(shouldReplaceAssistant("Read [the PDF](./report.pdf)."), false);
+  assert.equal(shouldReplaceAssistant("Price: $20 and $30."), false);
+  assert.equal(shouldReplaceAssistant(String.raw`中文 \(\frac{a+b`), false);
+  assert.equal(shouldReplaceAssistant(String.raw`中文 \(\frac{a+b}{2}\) English`), true);
+  assert.equal(shouldReplaceAssistant("```ui\n$x^2$\n```"), false);
+  assert.equal(shouldReplaceAssistant("| A | B |\n| --- | --- |\n| C | D |"), true);
+  assert.equal(shouldReplaceAssistant("```ts\nconst price = '$a$';\n```"), true);
+});
+
+test("keeps one projected reply with the same original text in both rendering modes", () => {
+  const item = { type: "assistant_message", text: "$a+b$", messageId: "math" } as const;
+  const phase = "complete";
+  const enhanced = assistantReplacement({ item, phase }, false);
+  const original = assistantReplacement({ item, phase }, true);
+  assert.equal(enhanced.items.length, 1);
+  assert.equal(original.items.length, 1);
+  assert.deepEqual(messageSchema.parse(enhanced.items[0].data), { text: item.text, phase, messageId: item.messageId });
+  assert.deepEqual(messageSchema.parse(original.items[0].data), { ...enhanced.items[0].data, plain: true });
+});
+
+test("keeps independent whole percentages for both formula sizes", () => {
+  const defaults = { inlineFormulaSize: "100", displayFormulaSize: "100" };
+  assert.deepEqual(readerSettings.schema.parse({}), defaults);
+  for (const field of ["inlineFormulaSize", "displayFormulaSize"]) {
+    for (const size of ["50", "101", "200"]) {
+      assert.deepEqual(readerSettings.schema.parse({ [field]: size }), { ...defaults, [field]: size });
+    }
+    for (const size of ["", "49", "50.5", "100%", "201"]) {
+      assert.equal(readerSettings.schema.safeParse({ [field]: size }).success, false);
+    }
+  }
+});
+
+test("scales inline formula geometry without changing the rendered asset or display formulas", () => {
+  const text = "Inline $a+b$.\n\n$$\na+b\n$$";
+  const spans = findFormulas(text);
+  const image = { uris: ["data:image/png;base64,aGVsbG8="], width: 40, height: 30, baseline: 20 };
+  const images = new Map(spans.map((span) => [formulaKey(span), image]));
+  const nativeMath: InlineMath[] = [];
+  const native = readingBlocks(text, spans, images, false, nativeMath, 1.5);
+  assert.deepEqual(nativeMath, [{ tex: "a+b", image: { ...image, width: 60, height: 45, baseline: 30 } }]);
+  assert.ok(native.some((block) => block.kind === "formula" && block.image === image));
+  const web = readingBlocks(text, spans, images, true, undefined, 1.5);
+  assert.ok(web.some((block) => block.kind === "markdown" && block.text.includes("omni-latex:60:45:15:a%2Bb")));
+  assert.ok(web.some((block) => block.kind === "formula" && block.image === image));
+});
 
 test("opens the Android share sheet with the file panel's local URI and MIME type", async (context) => {
   const originalExpo = Object.getOwnPropertyDescriptor(globalThis, "expo");
@@ -60,7 +113,7 @@ test("preserves workspace links and replaces only genuine LaTeX, including a tab
   const image = { uris: ["data:image/png;base64,aGVsbG8="], width: 30, height: 12 };
   const blocks = readingBlocks(text, spans, new Map(spans.map((span) => [formulaKey(span), image])), true);
   const result = blocks.flatMap((block) => block.kind === "markdown" || block.kind === "code" ? [block.text] : []).join("\n");
-  assert.match(result, /中文 !\[E=mc\^2\]\(data:image\/png;base64,aGVsbG8= "omni-latex:12:E%3Dmc%5E2"\) English/);
+  assert.match(result, /中文 !\[E=mc\^2\]\(data:image\/png;base64,aGVsbG8= "omni-latex:30:12:2:E%3Dmc%5E2"\) English/);
   assert.ok(result.includes("[PDF](./大文件.pdf)"));
   assert.ok(result.includes("[代码](./src/math.ts#L31)"));
   assert.ok(result.includes("[Markdown](./file-$cash$.md)"));
@@ -116,88 +169,75 @@ test("keeps native math as individual attachments and retains chat links", () =>
   assert.deepEqual(attachments, [{ image, tex: String.raw`\frac{a+b}{2}` }]);
 });
 
-test("resolves nested Markdown links for preview and preserves the authored source", async () => {
-  const folder = await mkdtemp(join(tmpdir(), "omni-links-"));
-  try {
-    const directory = join(folder, "文档");
-    await mkdir(directory);
-    const source = [
-      String.raw`中文 \(E=mc^2\) [PDF](./report.pdf) [code](../example.ts#L31) ![chart](<chart (1).png>)`,
-      '[contents][guide] [external](https://example.test/path) [anchor](#section) [outside](../../outside.pdf)',
-      '`[literal](./code.pdf)`',
-      '',
-      '[guide]: ./guide.md "Guide"',
-      '',
-      '```md', '[example](./fixture.pdf)', '```',
-    ].join("\r\n");
-    const path = join(directory, "notes.md");
-    await writeFile(path, source);
-    const result = await loadTextPage(folder, path, 0);
-    assert.equal(result.source, source);
-    assert.equal(result.markdown, source
-      .replace("(./report.pdf)", "(./%E6%96%87%E6%A1%A3/report.pdf)")
-      .replace("(../example.ts#L31)", "(./example.ts#L31)")
-      .replace("<chart (1).png>", "<./%E6%96%87%E6%A1%A3/chart%20%281%29.png>")
-      .replace("[guide]: ./guide.md", "[guide]: ./%E6%96%87%E6%A1%A3/guide.md"));
-  } finally {
-    await rm(folder, { recursive: true, force: true });
-  }
-});
-
-test("reads a UTF-8 Markdown document beyond 1 MiB by byte offset and retains code fences", async () => {
-  const folder = await mkdtemp(join(tmpdir(), "omni-text-"));
-  try {
-    const source = "# 文档\r\n\r\n```text\r\n" + "中英 Reader 🎉 long fenced code\r\n".repeat(36_000) + "```\r\n\r\nEnd";
-    await writeFile(join(folder, "large.md"), source);
-    const first = await loadTextPage(folder, "large.md", 0);
-    assert.ok(first.size > 1024 * 1024);
-    assert.ok(first.source.startsWith("# 文档"));
-    assert.ok(first.nextOffset && first.nextOffset <= textPageBytes);
-    assert.equal(first.fence?.marker, "```");
-    assert.match(first.markdown, /```\n$/);
-    let page = first;
-    const recovered = [page.source];
-    while (page.nextOffset !== null) {
-      page = await loadTextPage(folder, "large.md", page.nextOffset, first.revision, page.fence);
-      assert.ok(page.markdown.startsWith("```text\n"));
-      recovered.push(page.source);
-    }
-    assert.equal(recovered.join(""), source);
-    await writeFile(join(folder, "large.md"), "replacement");
-    await assert.rejects(loadTextPage(folder, "large.md", first.nextOffset, first.revision), /File changed/);
-  } finally {
-    await rm(folder, { recursive: true, force: true });
-  }
-});
-
-test("workspace readers reject paths and symlinks outside the selected root", async () => {
+test("workspace preview and external opening reject paths and symlinks outside the selected root", async () => {
   const folder = await mkdtemp(join(tmpdir(), "omni-path-"));
   const outside = await mkdtemp(join(tmpdir(), "omni-outside-"));
   try {
-    const secret = join(outside, "outside.md");
+    const secret = join(outside, "outside.pdf");
     await writeFile(secret, "outside");
-    await symlink(secret, join(folder, "alias.md"), "file");
-    await assert.rejects(loadTextPage(folder, secret, 0), /outside the workspace/);
-    await assert.rejects(loadTextPage(folder, "alias.md", 0), /outside the workspace/);
+    await symlink(secret, join(folder, "alias.pdf"), "file");
+    for (const path of [secret, "alias.pdf"]) {
+      await assert.rejects(rasterizePdf(folder, path, 1, 640), /outside the workspace/);
+      await assert.rejects(openWithDefaultApp(folder, path), /outside the workspace/);
+    }
   } finally {
     await Promise.all([folder, outside].map((path) => rm(path, { recursive: true, force: true })));
   }
 });
 
+test("continues between portrait and landscape pages that each fit entirely at 100%", () => {
+  const viewport = { width: 600, height: 500 };
+  const layout = fitPages([{ count: 1, width: 750, height: 1_000 }, { count: 2, width: 1_200, height: 600 }], viewport);
+  assert.deepEqual(pageBounds(layout, 1), { width: 375, height: 500, top: 0 });
+  assert.deepEqual(pageBounds(layout, 2), { width: 600, height: 300, top: 512 });
+  assert.deepEqual(pageBounds(layout, 3), { width: 600, height: 300, top: 824 });
+  assert.equal(pageAt(layout, 511), 1);
+  assert.equal(pageAt(layout, 512), 2);
+  assert.equal(pageAt(layout, 824), 3);
+  const fitted = constrain({ x: 0, y: 0, scale: 1 }, layout);
+  assert.deepEqual(jumpToPage(fitted, 3, layout), { x: 0, y: -824, scale: 1 });
+  assert.deepEqual(zoomAt(fitted, 2, { x: 300, y: 80 }, layout), { x: -300, y: -80, scale: 2 });
+});
+
 test("mouse drag and touch pinch/pan work at the upper edge of a zoomed PDF page", () => {
-  const page = { width: 600, height: 800 };
-  const viewport = { width: 360, height: 400 };
-  const fitted = constrain({ x: 0, y: 0, scale: 0.6 }, page, viewport);
+  const layout = fitPages([{ count: 2, width: 600, height: 800 }], { width: 360, height: 400 });
+  const fitted = constrain({ x: 0, y: 0, scale: 1 }, layout);
   const mouse = [{ id: 1, x: 320, y: 35 }];
-  const zoomed = constrain({ x: 0, y: 0, scale: 1.5 }, page, viewport);
-  const dragged = moveContacts(zoomed, mouse, [{ id: 1, x: 70, y: 35 }], page, viewport);
-  assert.deepEqual(dragged, { x: -250, y: 0, scale: 1.5 });
+  const zoomed = constrain({ x: 0, y: 0, scale: 2 }, layout);
+  const dragged = moveContacts(zoomed, mouse, [{ id: 1, x: 70, y: 35 }], layout);
+  assert.deepEqual(dragged, { x: -240, y: 0, scale: 2 });
   const fingers = [{ id: 1, x: 130, y: 35 }, { id: 2, x: 230, y: 35 }];
-  const pinched = moveContacts(fitted, fingers, [{ ...fingers[0], x: 60 }, { ...fingers[1], x: 300 }], page, viewport);
-  assert.ok(pinched.scale > 1.4);
-  const panned = moveContacts(pinched, mouse, [{ id: 1, x: 30, y: 35 }], page, viewport);
+  const pinched = moveContacts(fitted, fingers, [{ ...fingers[0], x: 60 }, { ...fingers[1], x: 300 }], layout);
+  assert.equal(pinched.scale, 2.4);
+  const panned = moveContacts(pinched, mouse, [{ id: 1, x: 30, y: 35 }], layout);
   assert.ok(panned.x < pinched.x);
   assert.equal(panned.y, pinched.y);
+});
+
+test("reads Markdown larger than 1 MiB in sections without splitting formulas or changing source links", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "omni-markdown-"));
+  try {
+    const directory = join(folder, "notes");
+    await mkdir(directory);
+    const path = join(directory, "test.md");
+    const tex = String.raw`\frac{a+b}{2}`;
+    const source = "a".repeat(markdownPageBytes - 7) + ` $${tex}$ [PDF](../report.pdf)\n\n` +
+      "中文 and English.\n\n".repeat(70_000);
+    assert.ok(Buffer.byteLength(source) > 1024 * 1024);
+    await writeFile(path, source);
+    let page = await loadMarkdownPage(folder, path, 0);
+    assert.ok(page.nextOffset);
+    assert.match(page.markdown, /\[PDF\]\(\.\/report\.pdf\)/);
+    assert.equal(findFormulas(page.markdown)[0]?.tex, tex);
+    const chunks = [page.source];
+    while (page.nextOffset !== null) {
+      page = await loadMarkdownPage(folder, path, page.nextOffset, page.revision, page.fence);
+      chunks.push(page.source);
+    }
+    assert.equal(chunks.join(""), source);
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
 });
 
 test("renders formula pixels and selects pages in a PDF larger than 1 MiB using the packaged worker", async () => {
@@ -207,10 +247,12 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
     const pdf = makeLargePdf();
     assert.ok(pdf.byteLength > 1024 * 1024);
     await writeFile(join(folder, "report.pdf"), pdf);
+    assert.deepEqual(await engine.dispatch({ kind: "pdf-layout", root: folder, path: "report.pdf" }),
+      [{ count: 2, width: 600, height: 800 }]);
     const math = await engine.dispatch({
       kind: "math", color: "#dddddd", platform: "web",
       formulas: [
-        { tex: "E=mc^2", display: false }, { tex: "\\frac{1}{2}", display: true },
+        { tex: "E=mc^2", display: false }, { tex: "\\frac{a+b}{2}", display: true },
         { tex: "\\frac{a+b}{2}", display: false },
         { tex: "\\unknowncommand{x}", display: false },
       ],
@@ -219,8 +261,10 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
     for (const image of [equation, display, fraction]) {
       assert.match(image?.uris[0] ?? "", /^data:image\/svg\+xml;base64,/);
     }
-    const fractionSvg = Buffer.from(fraction?.uris[0].split(",")[1] ?? "", "base64").toString("utf8");
-    assert.match(fractionSvg, /scale\(0\.92\)/);
+    const glyphs = (uri: string) => Buffer.from(uri.split(",")[1], "base64").toString("utf8").match(/<g data-mml-node="mfrac">.*<\/g><\/g><\/svg>/)?.[0];
+    assert.ok(display && fraction && glyphs(fraction.uris[0]));
+    assert.ok(fraction.width >= display.width * 1.3 && fraction.height >= display.height * 1.3);
+    assert.equal(glyphs(fraction.uris[0]), glyphs(display.uris[0]));
     assert.equal(invalid, null);
     for (const platform of ["ios", "android"] as const) {
       const { images: [formula] } = await engine.dispatch({
@@ -228,7 +272,9 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
         formulas: [{ tex: "\\frac{a+b}{2}", display: false }],
       });
       assert.ok(formula && formula.uris.length === 1);
-      assert.ok(formula.baseline && formula.baseline > 12 && formula.height - formula.baseline > 4);
+      assert.equal(formula.width, fraction.width);
+      assert.equal(formula.height, fraction.height);
+      assert.ok(formula.baseline && formula.baseline > 40 && formula.height - formula.baseline > 20);
       const png = Buffer.from(formula.uris[0].split(",")[1], "base64");
       assert.equal(png.readUInt32BE(16), formula.width * 3);
       assert.equal(png.readUInt32BE(20), formula.height * 3);
@@ -238,11 +284,6 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
     assert.deepEqual([first.page, second.page, second.pages, second.width, second.height], [1, 2, 2, 600, 800]);
     assert.match(second.uri, /^data:image\/jpeg;base64,\/9j\//);
     assert.notEqual(first.uri, second.uri);
-    await writeFile(join(folder, "sample.csv"), '指标,说明\r\n平均值,"分子, 分母"\r\n"quoted\nlabel",4\r\n');
-    const csv = await engine.dispatch({ kind: "document", root: folder, path: "sample.csv" });
-    assert.deepEqual(csv.sections[0].blocks[0], {
-      kind: "table", rows: [["指标", "说明"], ["平均值", "分子, 分母"], ["quoted\nlabel", "4"]], header: true,
-    });
   } finally {
     engine.stop();
     await rm(folder, { recursive: true, force: true });

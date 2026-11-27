@@ -60,14 +60,23 @@ function makeDocument() {
   });
   input.postFilters.add(({ math }: { math: { display: boolean } }) => {
     if (math.display) return;
+    const fractions: MmlNode[] = [];
     input.parseOptions.root.walkTree((node) => {
       if (!node.isKind("mfrac")) return;
       const fraction = node as MmlNode;
       if (fraction.attributes.get("displaystyle") || fraction.attributes.get("scriptlevel") !== 0) return;
-      for (const child of fraction.childNodes) {
-        child.walkTree((descendant) => (descendant as MmlNode).attributes?.setInherited("scriptsizemultiplier", 0.92));
-      }
+      if (fraction.attributes.getExplicit("displaystyle") === false) return;
+      fractions.push(fraction);
     });
+    for (const fraction of fractions) {
+      fraction.attributes.setInherited("displaystyle", true);
+      for (const child of fraction.childNodes) {
+        child.walkTree((descendant) => {
+          const attributes = (descendant as MmlNode).attributes;
+          if (attributes) attributes.setInherited("scriptlevel", Math.max(0, Number(attributes.get("scriptlevel")) - 1));
+        });
+      }
+    }
   });
   const document = mathjax.document("", {
     InputJax: input,
@@ -90,7 +99,7 @@ async function typeset({ tex, display }: Formula, color: string, platform: Formu
   const bottom = top + height + padding;
   const paddedWidth = width + 130;
   const paddedHeight = bottom - y;
-  const scale = display ? 0.022 : 0.02;
+  const scale = display ? 0.022 : 0.03;
   const pixelWidth = Math.ceil(paddedWidth * scale);
   const pixelHeight = Math.ceil(paddedHeight * scale);
   if (pixelWidth > 1150 || pixelHeight > 325 || pixelWidth * pixelHeight > 170_000) return null;

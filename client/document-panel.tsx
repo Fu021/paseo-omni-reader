@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import { Image, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import { useFileUrl, useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
-import { DocumentFrame, FlatList, Loading, ScrollView } from "@getpaseo/plugin/client/ui";
-import { imageExtensions, readStructuredDocument, type DocumentBlock } from "../shared/contracts";
+import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
+import { FlatList, Loading, ScrollView } from "@getpaseo/plugin/client/ui";
+import { readStructuredDocument, type DocumentBlock } from "../shared/contracts";
 import { Control, ReadError, Toolbar, useFileGeneration, type Theme } from "./controls";
 import { ExternalFileAction } from "./external-file";
 import { messages } from "./messages";
@@ -24,13 +24,12 @@ function DataTable({ block, theme, fill = false }: {
   const renderRow = (row: string[], index: number) => (
     <View key={index} role="row" style={{
       flexDirection: "row", borderBottomWidth: 1, borderColor: theme.colors.border,
-      backgroundColor: block.header && index === 0 ? theme.colors.surface2 : index % 2 ? theme.colors.surface1 : theme.colors.surface0,
+      backgroundColor: index % 2 ? theme.colors.surface1 : theme.colors.surface0,
     }}>
       {widths.map((width, column) => (
         <Text key={column} selectable style={{
           color: theme.colors.foreground, width, paddingHorizontal: 10, paddingVertical: 8,
           borderRightWidth: 1, borderColor: theme.colors.border,
-          fontWeight: block.header && index === 0 ? "600" : "400",
         }}>{row[column] ?? ""}</Text>
       ))}
     </View>
@@ -51,10 +50,7 @@ function DataTable({ block, theme, fill = false }: {
 }
 
 export function StructuredPanel(props: PluginFilePanelProps) {
-  return <StructuredReader key={props.file.path} {...props} />;
-}
-
-function StructuredReader({ file, host, workspaceId, theme, layout: { compact } }: PluginFilePanelProps) {
+  const { file, host, workspaceId, theme, layout: { compact } } = props;
   const { t } = useTranslation(messages);
   const rpc = useRpc(readStructuredDocument);
   const generation = useFileGeneration(file);
@@ -67,13 +63,16 @@ function StructuredReader({ file, host, workspaceId, theme, layout: { compact } 
   const sections = result.data?.sections ?? [];
   const index = Math.min(selected, Math.max(0, sections.length - 1));
   const active = sections[index];
-  const tabular = file.extension === "xlsx" || file.extension === "csv" || file.extension === "tsv";
+  const tabular = file.extension === "xlsx";
   const slides = file.extension === "pptx";
   return (
     <View testID="omni-structured-panel" style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
       <Toolbar theme={theme}>
-        <ExternalFileAction file={file} theme={theme} compact={compact} />
+        <ExternalFileAction {...props} />
       </Toolbar>
+      <Text style={{ color: theme.colors.foregroundMuted, paddingHorizontal: 12, paddingVertical: 6 }}>
+        {t("officeLayoutUnavailable")}
+      </Text>
       {result.isPending && <Loading />}
       {result.isError && (
         <ReadError theme={theme} compact={compact} label={t("textError")} error={result.error}
@@ -111,26 +110,6 @@ function StructuredReader({ file, host, workspaceId, theme, layout: { compact } 
             )}
         />
       ) : result.data && <Text style={{ padding: 16, color: theme.colors.foregroundMuted }}>{t("empty")}</Text>}
-    </View>
-  );
-}
-
-export function VisualPanel({ file, theme, layout: { compact } }: PluginFilePanelProps) {
-  const url = useFileUrl(file);
-  const { t } = useTranslation(messages);
-  const image = imageExtensions.includes(file.extension);
-  const [failed, setFailed] = useState<string>();
-  return (
-    <View testID="omni-visual-panel" style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
-      <Toolbar theme={theme}>
-        <ExternalFileAction file={file} theme={theme} compact={compact} />
-      </Toolbar>
-      {url.status === "loading" ? <Loading /> : url.status === "error" || url.url === failed ? (
-        <Text accessibilityRole="alert" style={{ color: theme.colors.foreground, padding: 16 }}>{t("textError")}</Text>
-      ) : image ? (
-        <Image testID="omni-file-image" accessibilityLabel={file.name} accessible source={{ uri: url.url }}
-          onError={() => setFailed(url.url)} resizeMode="contain" style={{ flex: 1, width: "100%" }} />
-      ) : <DocumentFrame testID="omni-file-frame" url={url.url} />}
     </View>
   );
 }

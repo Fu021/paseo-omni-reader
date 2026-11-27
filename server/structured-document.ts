@@ -1,8 +1,7 @@
 import { posix, extname } from "node:path";
 import { DOMParser, onErrorStopParsing, type Document, type Element } from "@xmldom/xmldom";
-import { parse } from "csv-parse/sync";
 import { fromBufferPromise } from "yauzl";
-import { dataExtensions, officeExtensions, type DocumentBlock, type DocumentSection } from "../shared/contracts";
+import { officeExtensions, type DocumentBlock, type DocumentSection } from "../shared/contracts";
 import { withWorkspaceFile } from "./workspace-file";
 
 const fileLimit = 24 * 1024 * 1024;
@@ -153,17 +152,9 @@ function limitPreview(sections: DocumentSection[]) {
 
 export function loadStructuredDocument(root: string, path: string) {
   const extension = extname(path).slice(1).toLowerCase();
-  return withWorkspaceFile(root, path, [...officeExtensions, ...dataExtensions], async (file, size) => {
+  return withWorkspaceFile(root, path, officeExtensions, async (file, size) => {
     if (size > fileLimit) throw new Error("Document exceeds the preview limit.");
-    const bytes = await file.readFile();
-    if (dataExtensions.includes(extension)) {
-      const rows: string[][] = parse(bytes, {
-        bom: true, delimiter: extension === "tsv" ? "\t" : ",", relax_column_count: true,
-        skip_empty_lines: true, to: maxRows + 1, max_record_size: 256 * 1024,
-      });
-      return limitPreview([{ blocks: [{ kind: "table", rows, header: true }] }]);
-    }
-    const documents = await loadOffice(bytes);
+    const documents = await loadOffice(await file.readFile());
     return limitPreview(extension === "docx" ? wordSections(documents)
       : extension === "xlsx" ? sheetSections(documents)
       : slideSections(documents));

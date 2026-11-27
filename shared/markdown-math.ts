@@ -4,6 +4,7 @@ import { maxFormulaLength, type Formula, type FormulaImage } from "./contracts";
 export const markdownParser = new MarkdownIt({ html: true });
 export const possibleMath = /[$]|\\[([]|(?:`{3,}|~{3,})[ \t]*math\b/i;
 export const formulaTitlePrefix = "omni-latex:";
+export const formulaTitlePattern = /^omni-latex:(\d+):(\d+):(-?\d+):(.+)$/;
 
 export interface FormulaSpan extends Formula {
   start: number;
@@ -171,7 +172,8 @@ export function formulaKey({ tex, display }: Formula): string {
 export function inlineFormula(span: FormulaSpan, image: FormulaImage, includeSource: boolean): string {
   const tex = span.tex.replace(/[\r\n\t]+/g, " ");
   const alt = tex.replace(/[\\[\]`*_<>$]/g, "\\$&").replaceAll("|", "&#124;");
-  const depth = image.baseline === undefined ? "" : `:${Math.round(image.height - image.baseline)}`;
-  const title = includeSource ? ` "${formulaTitlePrefix}${image.height}${depth}:${encodeURIComponent(span.tex)}"` : "";
+  const depth = Math.round(image.height - (image.baseline ?? image.height * 0.8));
+  const title = includeSource
+    ? ` "${formulaTitlePrefix}${image.width}:${image.height}:${depth}:${encodeURIComponent(span.tex)}"` : "";
   return image.uris.map((uri, index) => `![${index ? "" : alt}](${uri}${title})`).join("\u2060");
 }

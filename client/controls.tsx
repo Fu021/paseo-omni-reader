@@ -1,10 +1,23 @@
 import { useTranslation, type PluginHostProps } from "@getpaseo/plugin/client";
+import { Icon } from "@getpaseo/plugin/client/ui";
 import { Pressable, Text, View } from "react-native";
 import { useEffect, useState, type ReactNode } from "react";
 import type { PluginFilePanelProps } from "@getpaseo/plugin/client";
 import { messages } from "./messages";
 
 export type Theme = PluginHostProps["theme"];
+
+export function CloseButton({ label, onPress, theme }: { label: string; onPress: () => void; theme: Theme }) {
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}
+      style={({ pressed }) => ({
+        width: 40, height: 40, alignItems: "center", justifyContent: "center",
+        borderRadius: 6, backgroundColor: pressed ? theme.colors.surface2 : "transparent",
+      })}>
+      <Icon name="X" size={20} color={theme.colors.foreground} />
+    </Pressable>
+  );
+}
 
 export function Control({
   title, label = title, theme, compact, disabled = false, selected, onPress,

@@ -1,9 +1,9 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { Image, Pressable, Text, View, type TextStyle } from "react-native";
 import { useTranslation } from "@getpaseo/plugin/client";
-import { Markdown } from "@getpaseo/plugin/client/ui";
+import { Markdown, ScrollView } from "@getpaseo/plugin/client/ui";
 import { lineOffsets, markdownParser } from "../shared/markdown-math";
-import { inlineMathMarker, type InlineMath } from "../shared/reading-blocks";
+import { inlineMathMarker, inlineMathReferenceFontSize, type InlineMath } from "../shared/reading-blocks";
 import type { Theme } from "./controls";
 import { messages } from "./messages";
 
@@ -11,6 +11,7 @@ const containsMath = new RegExp(inlineMathMarker.source);
 const words = typeof Intl.Segmenter === "function" ? new Intl.Segmenter("zh-CN", { granularity: "word" }) : undefined;
 const opening = /^[([{“‘「『《（【]$/u;
 const closing = /^[,.!?;:%)\]}、。，！？；：）】」』》”’]+$/u;
+const headingScales = { h1: 1.6, h2: 1.4, h3: 1.2, h4: 1.1, h5: 1, h6: 1 };
 type Token = ReturnType<typeof markdownParser.parse>[number];
 
 function breakableText(text: string) {
@@ -30,35 +31,39 @@ function breakableText(text: string) {
   return parts;
 }
 
-function InlineFormula({ math, maxWidth, onActions }: {
-  math: InlineMath; maxWidth: number; onActions: (tex: string) => void;
+function InlineFormula({ math, maxWidth, textScale, onActions }: {
+  math: InlineMath; maxWidth: number; textScale: number; onActions: (math: InlineMath) => void;
 }) {
   const { t } = useTranslation(messages);
   const { image, tex } = math;
-  const scale = Math.min(1, maxWidth / image.width);
+  const width = image.width * textScale;
+  const height = image.height * textScale;
   const baseline = Math.min(image.height - 1, Math.max(0, image.baseline ?? image.height * 0.8));
-  return (
+  const formula = (
     <Pressable
       testID="omni-inline-math"
       accessibilityRole="button"
       accessibilityLabel={tex}
       accessibilityHint={t("formulaActionHint")}
-      onLongPress={() => onActions(tex)}
+      onLongPress={() => onActions(math)}
       accessibilityActions={[{ name: "activate", label: t("formulaActions") }]}
-      onAccessibilityAction={({ nativeEvent }) => { if (nativeEvent.actionName === "activate") onActions(tex); }}
-      style={{ width: image.width * scale, height: image.height * scale, paddingTop: baseline * scale }}
+      onAccessibilityAction={({ nativeEvent }) => { if (nativeEvent.actionName === "activate") onActions(math); }}
+      style={{ width, height, paddingTop: baseline * textScale }}
     >
-      <Text importantForAccessibility="no" style={{ fontSize: 1, lineHeight: 1, color: "transparent" }}>{"\u200B"}</Text>
-      <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}>
+      <Text allowFontScaling={false} importantForAccessibility="no" style={{ fontSize: 1, lineHeight: 1, color: "transparent" }}>{"\u200B"}</Text>
+      <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, width, height }}>
         <Image accessible={false} source={{ uri: image.uris[0] }} resizeMode="contain"
-          fadeDuration={0} style={{ width: "100%", height: "100%" }} />
+          fadeDuration={0} style={{ width, height }} />
       </View>
     </Pressable>
   );
+  return width > maxWidth
+    ? <ScrollView horizontal nestedScrollEnabled style={{ width: maxWidth, height, flexGrow: 0 }}>{formula}</ScrollView>
+    : formula;
 }
 
 function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWidth: number,
-  onActions: (tex: string) => void, fontSize: number): ReactNode[] {
+  onActions: (math: InlineMath) => void, fontSize: number, fontScale: number): ReactNode[] {
   const runs: ReactNode[] = [];
   const marks: string[] = [];
   const addText = (content: string, code = false) => {
@@ -100,7 +105,10 @@ function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWi
       for (const match of token.content.matchAll(inlineMathMarker)) {
         addText(token.content.slice(offset, match.index));
         const math = formulas[Number(match[1])];
-        if (math) runs.push(<InlineFormula key={runs.length} math={math} maxWidth={maxWidth} onActions={onActions} />);
+        if (math) runs.push(
+          <InlineFormula key={runs.length} math={math} maxWidth={maxWidth}
+            textScale={fontScale * fontSize / inlineMathReferenceFontSize} onActions={onActions} />,
+        );
         offset = match.index + match[0].length;
       }
       addText(token.content.slice(offset));
@@ -118,8 +126,9 @@ function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWi
   return runs;
 }
 
-function NativeBlock({ source, tokens, theme, formulas, onActions }: {
-  source: string; tokens: Token[]; theme: Theme; formulas: InlineMath[]; onActions: (tex: string) => void;
+function NativeBlock({ source, tokens, theme, formulas, onActions, bodySize, fontScale }: {
+  source: string; tokens: Token[]; theme: Theme; formulas: InlineMath[]; onActions: (math: InlineMath) => void;
+  bodySize: number; fontScale: number;
 }) {
   const [width, setWidth] = useState(0);
   const lists: (number | null)[] = [];
@@ -144,16 +153,17 @@ function NativeBlock({ source, tokens, theme, formulas, onActions }: {
           return token.map && <Markdown key={index}>{source.slice(offsets[token.map[0]], offsets[token.map[1]])}</Markdown>;
         }
         if (token.type !== "inline" || !token.children) return null;
-        const heading = tokens[index - 1]?.type === "heading_open";
-        const fontSize = heading ? Math.max(17, 27 - 2 * Number(tokens[index - 1].tag[1])) : 16;
+        const heading = tokens[index - 1]?.tag as keyof typeof headingScales | undefined;
+        const fontSize = Math.round(bodySize * ((heading && headingScales[heading]) || 1));
         const indent = Math.min(6, quoteDepth + lists.length) * 12;
         const prefix = bullet;
         bullet = "";
         return (
           <View key={index} style={{ marginLeft: indent, flexDirection: "row", gap: prefix ? 6 : 0 }}>
-            {!!prefix && <Text style={{ color: theme.colors.foregroundMuted, fontSize, lineHeight: 24 }}>{prefix}</Text>}
+            {!!prefix && <Text style={{ color: theme.colors.foregroundMuted, fontSize, lineHeight: Math.round(fontSize * 1.5) }}>{prefix}</Text>}
             <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", rowGap: 1 }}>
-              {inlineRuns(token.children, formulas, theme, Math.max(32, (width || 280) - indent - (prefix ? 26 : 0)), onActions, fontSize)}
+              {inlineRuns(token.children, formulas, theme,
+                width ? Math.max(1, width - indent - (prefix ? 26 : 0)) : Infinity, onActions, fontSize, fontScale)}
             </View>
           </View>
         );
@@ -162,8 +172,9 @@ function NativeBlock({ source, tokens, theme, formulas, onActions }: {
   );
 }
 
-export function NativeMarkdown({ text, formulas, theme, onActions }: {
-  text: string; formulas: InlineMath[]; theme: Theme; onActions: (tex: string) => void;
+export function NativeMarkdown({ text, formulas, theme, onActions, bodySize, fontScale }: {
+  text: string; formulas: InlineMath[]; theme: Theme; onActions: (math: InlineMath) => void;
+  bodySize: number; fontScale: number;
 }) {
   const sections = useMemo(() => {
     if (!containsMath.test(text)) return [{ text }];
@@ -188,7 +199,8 @@ export function NativeMarkdown({ text, formulas, theme, onActions }: {
   return sections.map((section, index) => (
     <Fragment key={index}>
       {section.tokens ? (
-        <NativeBlock source={text} tokens={section.tokens} theme={theme} formulas={formulas} onActions={onActions} />
+        <NativeBlock source={text} tokens={section.tokens} theme={theme} formulas={formulas}
+          onActions={onActions} bodySize={bodySize} fontScale={fontScale} />
       ) : <Markdown>{section.text}</Markdown>}
     </Fragment>
   ));

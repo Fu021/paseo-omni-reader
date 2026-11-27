@@ -70,12 +70,15 @@ function createWorkerQueue(source: string) {
 export function createEngine() {
   const math = createWorkerQueue(mathWorker);
   const document = createWorkerQueue(documentWorker);
+  const office = createWorkerQueue(documentWorker);
+  const queues = { math, document, pdf: document, "pdf-layout": document, office, "office-layout": office };
   return {
     dispatch: <Request extends EngineRequest>(request: Request) =>
-      (request.kind === "math" ? math : document).dispatch(request),
+      queues[request.kind].dispatch(request),
     stop: () => {
       math.stop();
       document.stop();
+      office.stop();
     },
   };
 }

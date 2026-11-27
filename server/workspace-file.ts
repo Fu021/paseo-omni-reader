@@ -25,7 +25,7 @@ export async function withWorkspaceFile<Result>(
   directory: string,
   path: string,
   extensions: readonly string[],
-  read: (file: FileHandle, size: number, revision: string) => Promise<Result>,
+  read: (file: FileHandle, size: number, revision: string, path: string) => Promise<Result>,
 ): Promise<Result> {
   const extension = (file: string) => extname(file).slice(1).toLowerCase();
   const root = await realpath(directory);
@@ -52,7 +52,7 @@ export async function withWorkspaceFile<Result>(
       throw new Error("File is no longer available.");
     }
     const revision = revisionOf(info);
-    const value = await read(file, Number(info.size), revision);
+    const value = await read(file, Number(info.size), revision, actual);
     if (revision !== revisionOf(await file.stat({ bigint: true }))) {
       throw new Error("File changed while reading. Reload the file.");
     }

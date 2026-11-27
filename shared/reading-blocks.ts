@@ -8,6 +8,7 @@ export type ReadingBlock =
   | { kind: "formula"; image?: FormulaImage; tex: string; source: string };
 
 export const inlineMathMarker = /\uE000omni(\d+)\uE001/g;
+export const inlineMathReferenceFontSize = 16;
 export interface InlineMath { image: FormulaImage; tex: string }
 
 function appendText(blocks: ReadingBlock[], text: string) {
@@ -50,7 +51,7 @@ function layoutBlocks(text: string, blocks: ReadingBlock[]) {
 
 export function readingBlocks(
   source: string, spans: FormulaSpan[], images: ReadonlyMap<string, FormulaImage | null>, includeSource = false,
-  nativeMath?: InlineMath[],
+  nativeMath?: InlineMath[], inlineScale = 1,
 ): ReadingBlock[] {
   const result: ReadingBlock[] = [];
   let cursor = 0;
@@ -65,13 +66,19 @@ export function readingBlocks(
       result.push({ kind: "formula", image, tex: span.tex, source: raw.trim() });
       parts = [];
     } else if (image) {
+      const inlineImage = inlineScale === 1 ? image : {
+        ...image,
+        width: Math.max(1, Math.round(image.width * inlineScale)),
+        height: Math.max(1, Math.round(image.height * inlineScale)),
+        baseline: image.baseline === undefined ? undefined : image.baseline * inlineScale,
+      };
       if (nativeMath) {
-        const index = nativeMath.push({ image, tex: span.tex }) - 1;
+        const index = nativeMath.push({ image: inlineImage, tex: span.tex }) - 1;
         parts.push(`\uE000omni${index}\uE001`);
       } else {
         const lineStart = source.lastIndexOf("\n", span.start - 1) + 1;
         if (/^[ \t]*$/.test(source.slice(lineStart, span.start))) parts.push("\u2060");
-        parts.push(inlineFormula(span, image, includeSource));
+        parts.push(inlineFormula(span, inlineImage, includeSource));
       }
     } else {
       parts.push(raw.replace(/[\\`*_~[\]<>|&]/g, "\\$&"));

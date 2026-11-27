@@ -1,41 +1,35 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { AssistantReader, transformAssistant } from "./client/markdown";
+import { registerAssistantReading } from "./client/markdown";
+import { fileReader } from "./client/file-reader";
 import { messages } from "./client/messages";
-import { PdfPanel } from "./client/pdf-panel";
-import { TextPanel } from "./client/text-panel";
-import { StructuredPanel, VisualPanel } from "./client/document-panel";
-import {
-  dataExtensions, frameExtensions, imageExtensions, markdownExtensions, markdownKind, messageSchema, officeExtensions, textExtensions,
-} from "./shared/contracts";
+import { OfficePanel, PdfPanel } from "./client/pdf-panel";
+import { MarkdownPanel } from "./client/markdown-panel";
+import { ReaderSettings } from "./client/settings";
+import { markdownExtensions, officeExtensions } from "./shared/contracts";
+
+const pdfReader = fileReader(PdfPanel);
+const documentReader = fileReader(OfficePanel);
+const markdownReader = fileReader(MarkdownPanel);
+const markdownPreference = { preferByDefault: true };
 
 export default function contribute(client: PluginClientContext) {
   const registrations = [
-    client.addFilePanel({
-      id: "markdown", title: messages.message("markdown"), icon: "BookOpenText",
-      files: { extensions: markdownExtensions }, Component: TextPanel,
-    }),
-    client.addFilePanel({
-      id: "text", title: messages.message("text"), icon: "FileText",
-      files: { extensions: textExtensions }, Component: TextPanel,
+    client.addSettingsScreen({
+      id: "reader", title: messages.message("formulaSettings"), icon: "Sigma", Component: ReaderSettings,
     }),
     client.addFilePanel({
       id: "pdf", title: messages.message("pdf"), icon: "FileText",
-      files: { extensions: ["pdf"] }, Component: PdfPanel,
+      files: { extensions: ["pdf"] }, Component: pdfReader,
     }),
     client.addFilePanel({
       id: "document", title: messages.message("document"), icon: "FileText",
-      files: { extensions: [...officeExtensions, ...dataExtensions] }, Component: StructuredPanel,
+      files: { extensions: officeExtensions }, Component: documentReader,
     }),
     client.addFilePanel({
-      id: "visual", title: messages.message("visual"), icon: "Image",
-      files: { extensions: [...frameExtensions, ...imageExtensions] }, Component: VisualPanel,
+      id: "markdown", title: messages.message("markdown"), icon: "BookOpenText",
+      ...markdownPreference, files: { extensions: markdownExtensions }, Component: markdownReader,
     }),
-    client.addTimelineRenderer({
-      kind: markdownKind, version: 1, schema: messageSchema, Component: AssistantReader,
-    }),
-    client.addTimelineTransformer({
-      id: "assistant-math", query: { itemType: "assistant_message" }, transform: transformAssistant,
-    }),
+    registerAssistantReading(client),
   ];
   return () => { for (const remove of registrations.reverse()) remove(); };
 }
