@@ -2,7 +2,7 @@
 
 Omni Reader provides read-only workspace previews for Markdown, PDF, Word, Excel and PowerPoint. Open files in the main panel or on the side using Paseo’s **Open location** settings. The plugin also renders LaTeX in streaming assistant replies. Use **Restore original reply** to switch back to Paseo’s Markdown.
 
-Use Paseo 0.17.5 or newer on the daemon and client. The plugin supports browser, desktop, iOS and Android clients. If Paseo asks which Markdown viewer to use, choose Omni Reader and remember the choice. A Git installation requires Node.js 22 or newer and npm on the daemon host. The plugin builds its rendering worker from locked dependencies during installation.
+Use Paseo 0.17.5 or newer on the daemon and client. The plugin supports browser, desktop, iOS and Android clients. If Paseo asks which Markdown viewer to use, choose Omni Reader and remember the choice.
 
 Inline fractions get room for the numerator and denominator. Standalone equations are centered. Both follow Paseo’s chat content font size, with separate size presets from 50% to 200% in the plugin settings. Hover for LaTeX or click to copy in a browser. Touch and hold any formula in the native app to show or copy its LaTeX. Failed formulas keep their source and offer a retry.
 
