@@ -1,7 +1,7 @@
 import { Worker } from "node:worker_threads";
 import documentWorker from "./generated/document-worker";
 import mathWorker from "./generated/math-worker";
-import type { EngineRequest, EngineResponse, EngineResults } from "./worker-entry";
+import type { EngineRequest, EngineResponse, EngineResults } from "./worker-protocol";
 
 function createWorkerQueue(source: string) {
   let worker: Worker | undefined;

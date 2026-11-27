@@ -1,34 +1,7 @@
 import { parentPort } from "node:worker_threads";
-import type { Formula, FormulaPlatform } from "../shared/contracts";
-import type { rasterizeFormulas } from "./math-engine";
-import type { inspectPdf, rasterizePdf } from "./pdf-engine";
-import type { loadStructuredDocument } from "./structured-document";
-import type { loadWorksheet } from "./worksheet";
+import type { EngineRequest, EngineResponse, EngineResults } from "./worker-protocol";
 
 declare const __OMNI_MATH_WORKER__: boolean;
-
-export type EngineRequest =
-  | { kind: "math"; color: string; platform: FormulaPlatform; formulas: Formula[] }
-  | { kind: "pdf"; root: string; path: string; page: number; pixels: number }
-  | { kind: "office"; key: string; data: Uint8Array; page: number; pixels: number }
-  | { kind: "pdf-layout"; root: string; path: string }
-  | { kind: "office-layout"; key: string; data: Uint8Array }
-  | { kind: "document"; root: string; path: string }
-  | { kind: "worksheet"; root: string; path: string; sheet: number };
-
-export interface EngineResults {
-  math: Awaited<ReturnType<typeof rasterizeFormulas>>;
-  pdf: Awaited<ReturnType<typeof rasterizePdf>>;
-  office: EngineResults["pdf"];
-  "pdf-layout": Awaited<ReturnType<typeof inspectPdf>>;
-  "office-layout": EngineResults["pdf-layout"];
-  document: Awaited<ReturnType<typeof loadStructuredDocument>>;
-  worksheet: Awaited<ReturnType<typeof loadWorksheet>>;
-}
-
-export type EngineResponse =
-  | { result: EngineResults[keyof EngineResults] }
-  | { error: string };
 
 parentPort?.on("message", async (request: EngineRequest) => {
   try {

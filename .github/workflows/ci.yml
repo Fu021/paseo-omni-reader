@@ -47,6 +47,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run check:package
+        if: matrix.node == 22
+      - name: Load the npm package in Paseo
+        if: matrix.node == 24
+        run: npm exec --yes --package=@getpaseo/cli@0.17.6 -- npm run check:package -- --paseo
       - name: Audit runtime dependencies
         if: matrix.node == 24
         run: npm audit --omit=dev --audit-level=high

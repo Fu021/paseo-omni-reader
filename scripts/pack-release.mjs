@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 
-const { values: { check } } = parseArgs({ options: { check: { type: "boolean" } } });
+const { values: { check, paseo } } = parseArgs({
+  options: { check: { type: "boolean" }, paseo: { type: "boolean" } },
+});
+assert.ok(!paseo || check, "--paseo requires --check.");
 const npm = process.env.npm_execpath;
 assert.ok(npm, "Run npm run pack:release.");
 const root = process.cwd();
@@ -16,6 +19,26 @@ function pack(directory, ...options) {
     npm, "pack", "--json", "--ignore-scripts", ...options,
   ], { cwd: directory, encoding: "utf8" }));
   return result;
+}
+
+function checkPaseoInstallation(home, installed, id) {
+  mkdirSync(home);
+  writeFileSync(join(home, "config.json"), JSON.stringify({
+    version: 1, daemon: { listen: "127.0.0.1:0", relay: { enabled: false } },
+    pluginsEnabled: true, plugins: {},
+  }));
+  const invoke = (args) => execFileSync("paseo", ["--home", home, ...args], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], timeout: 90_000,
+  });
+  invoke(["daemon", "start", "--timeout", "30"]);
+  try {
+    invoke(["plugin", "install", installed, "--json"]);
+    const [plugin] = JSON.parse(invoke(["plugin", "ls", id, "--json"]));
+    assert.equal(plugin?.status, "running", JSON.stringify(plugin));
+    console.log(`${id} is running in an isolated Paseo daemon.`);
+  } finally {
+    invoke(["daemon", "stop"]);
+  }
 }
 
 const source = pack(root, "--dry-run");
@@ -86,6 +109,7 @@ try {
     }
     assert.equal(JSON.parse(readFileSync(join(installed, "paseo-plugin.json"), "utf8")).build, undefined);
     console.log(`Packed and installed ${release.id} with ${release.files.length} files.`);
+    if (paseo) checkPaseoInstallation(join(temporary, "daemon"), installed, manifest.id);
   } else {
     copyFileSync(archive, join(root, release.filename));
     console.log(release.filename);
