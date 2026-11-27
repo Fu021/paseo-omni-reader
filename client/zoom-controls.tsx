@@ -3,7 +3,7 @@ import { Keyboard, Platform, Text, TextInput, View, type GestureResponderEvent, 
 import { useTranslation } from "@getpaseo/plugin/client";
 import { Control, useWebTitle, type Theme } from "./controls";
 import { messages } from "./messages";
-import { clamp, maxZoomPercent, minZoomPercent } from "./pdf-geometry";
+import { clamp, maxZoomPercent, minZoomPercent } from "./viewport-geometry";
 import { bindWebSliderKeys } from "./web";
 
 const trackInset = 8;

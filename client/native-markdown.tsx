@@ -1,11 +1,12 @@
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, memo, useMemo, useState, type ReactNode } from "react";
 import { Image, Pressable, Text, View, type TextStyle } from "react-native";
 import { useTranslation } from "@getpaseo/plugin/client";
-import { Markdown, ScrollView } from "@getpaseo/plugin/client/ui";
+import { Markdown } from "@getpaseo/plugin/client/ui";
 import { lineOffsets, markdownParser } from "../shared/markdown-math";
 import { inlineMathMarker, inlineMathReferenceFontSize, type InlineMath } from "../shared/reading-blocks";
 import type { Theme } from "./controls";
 import { messages } from "./messages";
+import { ReaderScrollView as ScrollView } from "./reader-scroll";
 
 const containsMath = new RegExp(inlineMathMarker.source);
 const words = typeof Intl.Segmenter === "function" ? new Intl.Segmenter("zh-CN", { granularity: "word" }) : undefined;
@@ -18,9 +19,10 @@ function breakableText(text: string) {
   const parts: string[] = [];
   const normalized = text.replace(/[ \t]+/g, " ");
   const segments = words
-    ? Array.from(words.segment(normalized), ({ segment }) => segment)
+    ? words.segment(normalized)
     : normalized.match(/[a-zA-Z\d]+| +|./gu) ?? [];
-  for (const segment of segments) {
+  for (const entry of segments) {
+    const segment = typeof entry === "string" ? entry : entry.segment;
     const previous = parts.at(-1);
     if (previous && (/^\s+$/u.test(segment) || closing.test(segment) || opening.test(previous))) {
       parts[parts.length - 1] += segment;
@@ -31,8 +33,8 @@ function breakableText(text: string) {
   return parts;
 }
 
-function InlineFormula({ math, maxWidth, textScale, onActions }: {
-  math: InlineMath; maxWidth: number; textScale: number; onActions: (math: InlineMath) => void;
+const InlineFormula = memo(function InlineFormula({ math, scrollWidth, textScale, onActions }: {
+  math: InlineMath; scrollWidth?: number; textScale: number; onActions: (math: InlineMath) => void;
 }) {
   const { t } = useTranslation(messages);
   const { image, tex } = math;
@@ -57,16 +59,17 @@ function InlineFormula({ math, maxWidth, textScale, onActions }: {
       </View>
     </Pressable>
   );
-  return width > maxWidth
-    ? <ScrollView horizontal nestedScrollEnabled style={{ width: maxWidth, height, flexGrow: 0 }}>{formula}</ScrollView>
-    : formula;
-}
+  return scrollWidth === undefined ? formula
+    : <ScrollView horizontal nestedScrollEnabled style={{ width: scrollWidth, height, flexGrow: 0 }}>{formula}</ScrollView>;
+});
 
 function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWidth: number,
   onActions: (math: InlineMath) => void, fontSize: number, fontScale: number): ReactNode[] {
   const runs: ReactNode[] = [];
   const marks: string[] = [];
+  const textScale = fontScale * fontSize / inlineMathReferenceFontSize;
   const addText = (content: string, code = false) => {
+    if (!content) return;
     const style: TextStyle = {
       color: theme.colors.foreground, fontSize, lineHeight: Math.round(fontSize * 1.5),
       fontWeight: marks.includes("strong") ? "700" : undefined,
@@ -106,8 +109,8 @@ function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWi
         addText(token.content.slice(offset, match.index));
         const math = formulas[Number(match[1])];
         if (math) runs.push(
-          <InlineFormula key={runs.length} math={math} maxWidth={maxWidth}
-            textScale={fontScale * fontSize / inlineMathReferenceFontSize} onActions={onActions} />,
+          <InlineFormula key={runs.length} math={math} textScale={textScale} onActions={onActions}
+            scrollWidth={math.image.width * textScale > maxWidth ? maxWidth : undefined} />,
         );
         offset = match.index + match[0].length;
       }
@@ -172,7 +175,7 @@ function NativeBlock({ source, tokens, theme, formulas, onActions, bodySize, fon
   );
 }
 
-export function NativeMarkdown({ text, formulas, theme, onActions, bodySize, fontScale }: {
+export const NativeMarkdown = memo(function NativeMarkdown({ text, formulas, theme, onActions, bodySize, fontScale }: {
   text: string; formulas: InlineMath[]; theme: Theme; onActions: (math: InlineMath) => void;
   bodySize: number; fontScale: number;
 }) {
@@ -204,4 +207,4 @@ export function NativeMarkdown({ text, formulas, theme, onActions, bodySize, fon
       ) : <Markdown>{section.text}</Markdown>}
     </Fragment>
   ));
-}
+});

@@ -10,7 +10,7 @@ import { markdownExtensions, officeExtensions } from "./shared/contracts";
 const pdfReader = fileReader(PdfPanel);
 const documentReader = fileReader(OfficePanel);
 const markdownReader = fileReader(MarkdownPanel);
-const markdownPreference = { preferByDefault: true };
+const defaultReader = { preferByDefault: true };
 
 export default function contribute(client: PluginClientContext) {
   const registrations = [
@@ -19,15 +19,15 @@ export default function contribute(client: PluginClientContext) {
     }),
     client.addFilePanel({
       id: "pdf", title: messages.message("pdf"), icon: "FileText",
-      files: { extensions: ["pdf"] }, Component: pdfReader,
+      ...defaultReader, files: { extensions: ["pdf"] }, Component: pdfReader,
     }),
     client.addFilePanel({
       id: "document", title: messages.message("document"), icon: "FileText",
-      files: { extensions: officeExtensions }, Component: documentReader,
+      ...defaultReader, files: { extensions: officeExtensions }, Component: documentReader,
     }),
     client.addFilePanel({
       id: "markdown", title: messages.message("markdown"), icon: "BookOpenText",
-      ...markdownPreference, files: { extensions: markdownExtensions }, Component: markdownReader,
+      ...defaultReader, files: { extensions: markdownExtensions }, Component: markdownReader,
     }),
     registerAssistantReading(client),
   ];

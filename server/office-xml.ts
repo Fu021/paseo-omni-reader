@@ -22,14 +22,14 @@ export function plainText(node: Element): string {
   return descendants(node, "t").map(({ textContent }) => textContent ?? "").join("");
 }
 
-export async function loadOffice(bytes: Buffer, selectedParts: RegExp): Promise<XmlParts> {
+export async function loadOffice(bytes: Buffer, select: (path: string) => boolean): Promise<XmlParts> {
   const archive = await fromBufferPromise(bytes, { lazyEntries: true, validateEntrySizes: true });
   const documents: XmlParts = new Map();
   let total = 0;
   try {
     if (archive.entryCount > 8_000) throw new Error("Document exceeds the preview limit.");
     for await (const entry of archive.eachEntry()) {
-      if (!selectedParts.test(entry.fileName)) continue;
+      if (!select(entry.fileName)) continue;
       total += entry.uncompressedSize;
       if (entry.uncompressedSize > xmlLimit || total > totalXmlLimit) throw new Error("Document exceeds the preview limit.");
       const stream = await archive.openReadStreamPromise(entry);
@@ -60,10 +60,12 @@ export function relatedParts(documents: XmlParts, main: string, tag: string) {
   return descendants(part, tag).map((entry) => {
     const relationship = entry.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id")
       ?? entry.getAttributeNS("http://purl.oclc.org/ooxml/officeDocument/relationships", "id");
+    const path = targets.get(relationship ?? "");
     return {
       name: entry.getAttribute("name") ?? undefined,
       hidden: ["hidden", "veryHidden"].includes(entry.getAttribute("state") ?? ""),
-      content: documents.get(targets.get(relationship ?? "") ?? ""),
+      path,
+      content: path ? documents.get(path) : undefined,
     };
   });
 }

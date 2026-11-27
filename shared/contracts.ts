@@ -31,12 +31,18 @@ const fenceSchema = z.object({
 });
 export type Fence = z.infer<typeof fenceSchema>;
 
+export const maxMarkdownTableLine = 8192;
+const markdownTableLine = z.string().min(1).max(maxMarkdownTableLine).regex(/^[^\r\n]+$/);
+const tableContinuation = z.object({ header: markdownTableLine, separator: markdownTableLine });
+export type TableContinuation = z.infer<typeof tableContinuation>;
+
 export const readMarkdownPage = defineRpc({
   name: "markdown.page",
   input: fileTarget.extend({
     offset: z.number().int().nonnegative(),
     revision: z.string().max(200).optional(),
     fence: fenceSchema.optional(),
+    table: tableContinuation.optional(),
   }),
   output: z.object({
     source: z.string(),
@@ -44,6 +50,7 @@ export const readMarkdownPage = defineRpc({
     nextOffset: z.number().int().nonnegative().nullable(),
     revision: z.string(),
     fence: fenceSchema.optional(),
+    table: tableContinuation.optional(),
   }),
 });
 

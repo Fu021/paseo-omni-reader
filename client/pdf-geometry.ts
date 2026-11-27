@@ -1,9 +1,5 @@
 import type { PageRun } from "../shared/contracts";
-
-export interface Point { x: number; y: number }
-export interface Size { width: number; height: number }
-export interface Position extends Point { scale: number }
-export interface Contact extends Point { id: number }
+import { clamp, zoomAround, type Point, type Position, type Size } from "./viewport-geometry";
 
 interface FittedRun extends Size {
   firstPage: number;
@@ -19,12 +15,6 @@ export interface ReaderLayout {
   lastTop: number;
   lastHeight: number;
 }
-
-export const clamp = (value: number, minimum: number, maximum: number) =>
-  Math.max(minimum, Math.min(maximum, value));
-
-export const minZoomPercent = 25;
-export const maxZoomPercent = 400;
 
 export function fitPages(sizes: PageRun[], viewport: Size): ReaderLayout {
   let firstPage = 1;
@@ -65,6 +55,17 @@ export function pageBounds(layout: ReaderLayout, number: number) {
   return { width: run.width, height: run.height, top: run.top + (number - run.firstPage) * run.step };
 }
 
+export function visiblePages(layout: ReaderLayout, position: Position) {
+  const top = -position.y / position.scale;
+  const bottom = top + layout.viewport.height / position.scale;
+  let first = pageAt(layout, top);
+  let last = pageAt(layout, bottom);
+  const leading = pageBounds(layout, first);
+  if (leading.top + leading.height <= top) first++;
+  if (pageBounds(layout, last).top >= bottom) last--;
+  return { first, last };
+}
+
 export function constrain(position: Position, layout: ReaderLayout): Position {
   const { scale } = position;
   const width = layout.width * scale;
@@ -82,38 +83,5 @@ export function jumpToPage(position: Position, number: number, layout: ReaderLay
 }
 
 export function zoomAt(position: Position, scale: number, anchor: Point, layout: ReaderLayout): Position {
-  const ratio = scale / position.scale;
-  return constrain({
-    scale,
-    x: anchor.x - (anchor.x - position.x) * ratio,
-    y: anchor.y - (anchor.y - position.y) * ratio,
-  }, layout);
-}
-
-export function boundZoom(scale: number) {
-  return clamp(scale, minZoomPercent / 100, maxZoomPercent / 100);
-}
-
-function midpoint(contacts: Contact[]): Point {
-  const [first, second = first] = contacts;
-  return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
-}
-
-function distance([first, second]: Contact[]): number {
-  return second ? Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)) : 1;
-}
-
-export function moveContacts(position: Position, previous: Contact[], next: Contact[], layout: ReaderLayout): Position {
-  if (!previous.length || previous.length !== next.length || previous.some((value, index) => value.id !== next[index].id)) {
-    return position;
-  }
-  const before = midpoint(previous);
-  const after = midpoint(next);
-  const scale = boundZoom(position.scale * distance(next) / distance(previous));
-  const ratio = scale / position.scale;
-  return constrain({
-    scale,
-    x: after.x - (before.x - position.x) * ratio,
-    y: after.y - (before.y - position.y) * ratio,
-  }, layout);
+  return constrain(zoomAround(position, scale, anchor), layout);
 }

@@ -1,6 +1,6 @@
 import { StringDecoder } from "node:string_decoder";
-import { markdownExtensions, maxFormulaLength, type Fence } from "../shared/contracts";
-import { findFormulas, possibleMath } from "../shared/markdown-math";
+import { markdownExtensions, maxFormulaLength, maxMarkdownTableLine, type Fence, type TableContinuation } from "../shared/contracts";
+import { findFormulas, lineOffsets, markdownParser, possibleMath } from "../shared/markdown-math";
 import { rebaseMarkdownLinks } from "./markdown-links";
 import { withWorkspaceFile } from "./workspace-file";
 
@@ -20,7 +20,13 @@ function afterLine(line: string, fence: Fence | undefined): Fence | undefined {
   return { marker, opening: marker + tail };
 }
 
-function chooseBoundary(text: string, initialFence: Fence | undefined) {
+interface Boundary {
+  end: number;
+  fence?: Fence;
+  table?: TableContinuation;
+}
+
+function chooseBoundary(text: string, initialFence: Fence | undefined): Boundary {
   let fence = initialFence;
   let lastLine = { end: 0, fence };
   let paragraph = lastLine;
@@ -43,7 +49,7 @@ function chooseBoundary(text: string, initialFence: Fence | undefined) {
   return { end: text.length, fence };
 }
 
-function keepFormulasTogether(text: string, prefix: string, boundary: ReturnType<typeof chooseBoundary>) {
+function keepFormulasTogether(text: string, prefix: string, boundary: Boundary): Boundary {
   const source = prefix + text;
   if (!possibleMath.test(source)) return boundary;
   const end = prefix.length + boundary.end;
@@ -58,7 +64,31 @@ function keepFormulasTogether(text: string, prefix: string, boundary: ReturnType
   return { end: restOfLine ? formulaEnd + restOfLine[0].length : text.length, fence: undefined };
 }
 
-export async function loadMarkdownPage(root: string, path: string, offset: number, revision?: string, fence?: Fence) {
+function continueTable(text: string, prefix: string, boundary: Boundary): Boundary {
+  const source = prefix + text;
+  if (boundary.fence || !/^[ \t]*\|?[ \t]*:?-+:?[ \t]*\|/m.test(source)) return boundary;
+  const offsets = lineOffsets(source);
+  const end = prefix.length + boundary.end;
+  const table = markdownParser.parse(source, {}).find((token) =>
+    token.type === "table_open" && token.level === 0 && token.map &&
+    offsets[token.map[0]] < end && end < offsets[token.map[1]]);
+  if (!table?.map) return boundary;
+  const [first, last] = table.map;
+  const headEnd = offsets[first + 2];
+  const header = source.slice(offsets[first], offsets[first + 1]).trimEnd();
+  const separator = source.slice(offsets[first + 1], headEnd).trimEnd();
+  if (header.length > maxMarkdownTableLine || separator.length > maxMarkdownTableLine) return boundary;
+
+  let next = last;
+  while (next > first + 2 && offsets[next] > end) next--;
+  const split = Math.max(headEnd, offsets[next]);
+  if (split <= prefix.length) return boundary;
+  return { end: split - prefix.length, table: { header, separator } };
+}
+
+export async function loadMarkdownPage(
+  root: string, path: string, offset: number, revision?: string, fence?: Fence, table?: TableContinuation,
+) {
   return withWorkspaceFile(root, path, markdownExtensions, async (file, size, stamp) => {
     if ((revision && stamp !== revision) || offset > size) throw new Error("File changed. Reload to read the new version.");
     const pageBytes = Math.min(markdownPageBytes, size - offset);
@@ -70,18 +100,21 @@ export async function loadMarkdownPage(root: string, path: string, offset: numbe
       length += bytesRead;
     }
     const eof = offset + pageBytes === size;
-    const prefix = fence ? `${fence.opening}\n` : "";
+    const prefix = fence ? `${fence.opening}\n` : table ? `${table.header}\n${table.separator}\n` : "";
     const decoder = new StringDecoder("utf8");
     const text = offset + length === size ? decoder.end(bytes) : decoder.write(bytes);
     const current = eof ? text : new StringDecoder("utf8").write(bytes.subarray(0, pageBytes));
-    const boundary = eof ? { end: text.length, fence: undefined }
-      : keepFormulasTogether(text, prefix, chooseBoundary(current, fence));
+    const boundary = eof ? { end: text.length }
+      : continueTable(text, prefix, keepFormulasTogether(text, prefix, chooseBoundary(current, fence)));
     const kept = text.slice(0, boundary.end);
     const encoded = Buffer.from(kept);
     if (!bytes.subarray(0, encoded.length).equals(encoded)) throw new Error("Reader supports UTF-8 text files.");
     const source = offset === 0 ? kept.replace(/^\uFEFF/, "") : kept;
     const suffix = boundary.fence ? `\n${boundary.fence.marker}\n` : "";
     const nextOffset = offset + encoded.length < size ? offset + encoded.length : null;
-    return { source, markdown: rebaseMarkdownLinks(prefix + source + suffix, root, path), nextOffset, revision: stamp, fence: boundary.fence };
+    return {
+      source, markdown: rebaseMarkdownLinks(prefix + source + suffix, root, path),
+      nextOffset, revision: stamp, fence: boundary.fence, table: boundary.table,
+    };
   });
 }

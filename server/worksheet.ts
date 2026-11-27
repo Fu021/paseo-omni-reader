@@ -3,12 +3,14 @@ import type { Worksheet } from "../shared/contracts";
 import { children, descendants, loadOffice, officeFileLimit, plainText, relatedParts } from "./office-xml";
 import { withWorkspaceFile } from "./workspace-file";
 
-const workbookParts = /^xl\/(?:workbook\.xml|styles\.xml|sharedStrings\.xml|worksheets\/[^/]+\.xml|_rels\/workbook\.xml\.rels)$/;
+const workbookParts = /^xl\/(?:workbook\.xml|styles\.xml|sharedStrings\.xml|_rels\/workbook\.xml\.rels)$/;
+const worksheetPart = /^xl\/worksheets\/[^/]+\.xml$/;
 const maxRows = 8_192;
 const maxColumns = 256;
 const maxCells = 80_000;
 const maxText = 400_000;
 const maxMerges = 4_096;
+const maxAutoWidth = 420;
 type CellStyle = Worksheet["styles"][number] & { format?: number };
 
 function position(reference: string) {
@@ -69,6 +71,66 @@ function formattedNumber(value: string, format?: number) {
   }
 }
 
+function textWidth(text: string, fontSize: number) {
+  let width = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if (character === "\t") width += 1.5;
+    else if (character === " " || "ilI.,:;!|'`".includes(character)) width += 0.34;
+    else if (code >= 0x2e80) width += code >= 0x1f000 ? 1.25 : 1;
+    else if ("WMwm@%&".includes(character)) width += 0.9;
+    else width += 0.65;
+  }
+  return width * fontSize;
+}
+
+function lineCount(text: string, fontSize: number, width: number) {
+  let lines = 0;
+  for (const paragraph of text.split("\n")) {
+    let available = width;
+    lines++;
+    for (const token of paragraph.match(/[^\S\n]+|[\u2e80-\uffff]|[^\s\u2e80-\uffff]+/gu) ?? []) {
+      const size = textWidth(token, fontSize);
+      if (size > available) {
+        if (available < width) lines++;
+        available = width;
+        if (!token.trim()) continue;
+        const extra = Math.max(0, Math.ceil(size / width) - 1);
+        lines += extra;
+        available -= size - extra * width;
+      } else {
+        available -= size;
+      }
+    }
+  }
+  return lines;
+}
+
+function fitCellContents({ cells, styles, merges, columns, rows }: Worksheet) {
+  const columnCount = columns.length;
+  const merged = new Map(merges.map((merge) => [merge[0] * columnCount + merge[1], merge]));
+  for (const [row, column, value, styleId] of cells) {
+    const style = styles[styleId];
+    if (!value || !rows[row] || !columns[column] || style?.wrap || merged.has(row * columnCount + column)) continue;
+    const fontSize = (style?.fontSize ?? 14) * (style?.bold ? 1.08 : 1);
+    const measured = value.split("\n").reduce((widest, line) => Math.max(widest, textWidth(line, fontSize)), 0);
+    columns[column] = Math.max(columns[column], Math.min(maxAutoWidth, Math.ceil(measured + 16)));
+  }
+  for (const [row, column, value, styleId] of cells) {
+    if (!value || !rows[row] || !columns[column]) continue;
+    const merge = merged.get(row * columnCount + column);
+    const lastRow = merge?.[2] ?? row;
+    const lastColumn = merge?.[3] ?? column;
+    const width = merge ? columns.slice(column, lastColumn + 1).reduce((total, value) => total + value, 0) : columns[column];
+    const height = merge ? rows.slice(row, lastRow + 1).reduce((total, value) => total + value, 0) : rows[row];
+    const style = styles[styleId];
+    const fontSize = style?.fontSize ?? 14;
+    const lines = lineCount(value, fontSize * (style?.bold ? 1.08 : 1), Math.max(1, width - 12));
+    const needed = Math.ceil(lines * fontSize * 1.25 + (lines > 1 ? 3 : 1));
+    rows[row] += Math.max(0, needed - height);
+  }
+}
+
 function parseSheet(content: DocumentPart, shared: string[], cellStyles: CellStyle[]): Worksheet {
   const cells: Worksheet["cells"] = [];
   const merges: Worksheet["merges"] = [];
@@ -115,10 +177,13 @@ function parseSheet(content: DocumentPart, shared: string[], cellStyles: CellSty
         : type === "b" ? raw === "1" ? "TRUE" : "FALSE"
         : numeric ? formattedNumber(raw, cellStyles[style]?.format) : raw || (formula ? `=${formula}` : "");
       if (!value && !style) continue;
-      const preview = value.slice(0, Math.min(1_024, maxText - textLength));
-      truncated ||= preview.length < value.length;
-      textLength += preview.length;
-      cells.push([cellRow, cellColumn, preview, style, numeric]);
+      if (textLength + value.length > maxText) {
+        textLength = maxText;
+        truncated = true;
+        break;
+      }
+      textLength += value.length;
+      cells.push([cellRow, cellColumn, value, style, numeric]);
     }
   }
   const mergeNodes = content ? descendants(content, "mergeCell") : [];
@@ -138,22 +203,26 @@ function parseSheet(content: DocumentPart, shared: string[], cellStyles: CellSty
       columns[index - 1] = col.getAttribute("hidden") === "1" ? 0 : width;
     }
   }
-  return {
+  const sheet = {
     columns: Array.from({ length: columnCount }, (_, index) => columns[index] ?? defaultWidth),
     rows: Array.from({ length: rowCount }, (_, index) => rows[index] ?? rowHeight),
     styles: cellStyles.map(({ format: _format, ...style }) => style),
     cells, merges, truncated,
   };
+  fitCellContents(sheet);
+  return sheet;
 }
 
 type DocumentPart = ReturnType<typeof relatedParts>[number]["content"];
 let cached: { key: string; workbook: Awaited<ReturnType<typeof loadWorkbook>> } | undefined;
 
 async function loadWorkbook(bytes: Buffer) {
-  const documents = await loadOffice(bytes, workbookParts);
+  const documents = await loadOffice(bytes, (path) => workbookParts.test(path));
   const shared = documents.get("xl/sharedStrings.xml");
   return {
-    sheets: relatedParts(documents, "xl/workbook.xml", "sheet").filter(({ hidden }) => !hidden).slice(0, 256),
+    bytes,
+    sheets: relatedParts(documents, "xl/workbook.xml", "sheet").filter(({ hidden }) => !hidden)
+      .slice(0, 256).map(({ name, path }) => ({ name: name ?? "", path })),
     shared: shared ? descendants(shared, "si").map(plainText) : [],
     styles: styles(documents.get("xl/styles.xml")?.documentElement),
   };
@@ -164,10 +233,18 @@ export function loadWorksheet(root: string, path: string, selected: number) {
     if (size > officeFileLimit) throw new Error("Document exceeds the preview limit.");
     const key = JSON.stringify([root, path, revision]);
     if (cached?.key !== key) cached = { key, workbook: await loadWorkbook(await file.readFile()) };
-    const { sheets, shared, styles } = cached.workbook;
+    const { sheets, bytes, shared, styles } = cached.workbook;
+    const selectedSheet = sheets[Math.min(selected, sheets.length - 1)];
+    let content: DocumentPart;
+    if (selectedSheet) {
+      if (!selectedSheet.path || !worksheetPart.test(selectedSheet.path)) throw new Error("Unsupported worksheet part.");
+      const parts = await loadOffice(bytes, (name) => name === selectedSheet.path);
+      content = parts.get(selectedSheet.path);
+      if (!content) throw new Error("Missing worksheet part.");
+    }
     return {
-      names: sheets.map(({ name }) => name ?? ""),
-      sheet: parseSheet(sheets[Math.min(selected, sheets.length - 1)]?.content, shared, styles),
+      names: sheets.map(({ name }) => name),
+      sheet: parseSheet(content, shared, styles),
     };
   });
 }

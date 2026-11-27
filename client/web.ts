@@ -3,7 +3,7 @@ import { formulaImageUri } from "../shared/contracts";
 import { formulaTitlePattern, formulaTitlePrefix } from "../shared/markdown-math";
 import { inlineMathReferenceFontSize } from "../shared/reading-blocks";
 import type { Theme } from "./controls";
-import type { Contact, Point } from "./pdf-geometry";
+import type { Contact, Point } from "./viewport-geometry";
 
 export const webTableStyles = {
   table: { display: "table", width: "max-content", borderSpacing: 0 },

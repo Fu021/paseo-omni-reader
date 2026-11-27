@@ -34,7 +34,7 @@ export function ReaderSettings() {
         })}
         {error && (
           <SettingsAction label={t("readerSettingsError")}
-            actionLabel={t(settings.status === "invalid" ? "reset" : "reloadFormulaSize")} disabled={settings.saving}
+            actionLabel={t(settings.status === "invalid" ? "resetFormulaSize" : "reloadFormulaSize")} disabled={settings.saving}
             onPress={() => { void recover(); }} />
         )}
       </SettingsCard>

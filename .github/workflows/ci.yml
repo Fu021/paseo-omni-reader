@@ -32,6 +32,17 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - name: Prepare a Git installation
+        if: matrix.node == 24
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import { readFileSync } from "node:fs";
+          const manifest = JSON.parse(readFileSync("paseo-plugin.json", "utf8"));
+          for (const [command, ...args] of manifest.build) {
+            execFileSync(command, args, { stdio: "inherit" });
+          }
+          NODE
       - run: npm ci --include=dev --ignore-scripts
       - run: npm run typecheck
       - run: npm test

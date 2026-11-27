@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
   useRpc, useSettings, useTranslation, type PluginClientContext, type PluginTimelineItemProps,
 } from "@getpaseo/plugin/client";
-import { copyText, Icon, Markdown, ScrollView, StreamedText, useToast } from "@getpaseo/plugin/client/ui";
-import { Image, Modal, Platform, Pressable, ScrollView as NativeScrollView, Text, View, useWindowDimensions, type TextStyle } from "react-native";
+import { copyText, Icon, Markdown, StreamedText, useToast } from "@getpaseo/plugin/client/ui";
+import { Image, Modal, Platform, Pressable, ScrollView as NativeScrollView, Text, View, useWindowDimensions, type LayoutChangeEvent, type TextStyle } from "react-native";
 import { formulaImageUri, formulasPerRequest, markdownKind, messageSchema, renderFormulas, type Formula, type FormulaImage } from "../shared/contracts";
 import { findFormulas, formulaKey, formulaTitlePattern, markdownParser } from "../shared/markdown-math";
 import { inlineMathMarker, inlineMathReferenceFontSize, readingBlocks, type InlineMath, type ReadingBlock } from "../shared/reading-blocks";
@@ -13,6 +13,7 @@ import { Control, type Theme } from "./controls";
 import { assistantReplacement, assistantReplyKey, shouldReplaceAssistant, type AssistantReply } from "./assistant-turn";
 import { messages } from "./messages";
 import { NativeMarkdown } from "./native-markdown";
+import { ReaderScrollView as ScrollView } from "./reader-scroll";
 import { bindWebFormulas, webTableStyles } from "./web";
 
 const maxDistinctFormulas = 144;
@@ -90,7 +91,7 @@ function asRgb(color: string): string {
   return "#16181a";
 }
 
-function CodeBlock({ block, theme, compact }: {
+const CodeBlock = memo(function CodeBlock({ block, theme, compact }: {
   block: Extract<ReadingBlock, { kind: "code" }>; theme: Theme; compact: boolean;
 }) {
   const { t } = useTranslation(messages);
@@ -124,7 +125,7 @@ function CodeBlock({ block, theme, compact }: {
       </ScrollView>
     </View>
   );
-}
+});
 
 const tableCellLimit = 360;
 const tableCellPadding = 12;
@@ -165,7 +166,7 @@ function nativeCellWidth(cell: string, formulas: InlineMath[], textScale: number
   return Math.ceil(Math.max(widestFormula, Math.min(tableCellLimit, preferredWidth))) + tableCellPadding * 2 + 2;
 }
 
-function TableBlock({ rows, theme, formulas, textScale, renderCell }: {
+const TableBlock = memo(function TableBlock({ rows, theme, formulas, textScale, renderCell }: {
   rows: string[][]; theme: Theme; formulas: InlineMath[]; textScale: number; renderCell?: (cell: string) => React.ReactNode;
 }) {
   const web = Platform.OS === "web";
@@ -209,7 +210,7 @@ function TableBlock({ rows, theme, formulas, textScale, renderCell }: {
       </View>
     </ScrollView>
   );
-}
+});
 
 function useCopyFormula() {
   const { t } = useTranslation(messages);
@@ -313,7 +314,7 @@ function FormulaActions({ formula: { tex, image }, theme, compact, close }: {
   );
 }
 
-export function RichMarkdown({ text, theme, compact, hostId }: {
+export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, hostId }: {
   text: string; theme: Theme; compact: boolean; hostId: string;
 }) {
   const { t } = useTranslation(messages);
@@ -325,11 +326,17 @@ export function RichMarkdown({ text, theme, compact, hostId }: {
   const native = platform !== "web";
   const bodyReferenceSize = native ? inlineMathReferenceFontSize : displayMathWebReferenceFontSize;
   const { fontScale } = useWindowDimensions();
-  const [contentWidth, setContentWidth] = useState(0);
-  const [referenceWidth, setReferenceWidth] = useState(0);
-  const bodySize = contentWidth > 0 && referenceWidth > 0
-    ? Math.round(bodyReferenceSize * contentWidth / referenceWidth)
-    : bodyReferenceSize;
+  const [bodySize, setBodySize] = useState(bodyReferenceSize);
+  const fontWidths = useRef({ content: 0, reference: 0 });
+  const measureFont = useCallback((sample: keyof typeof fontWidths.current, event: LayoutChangeEvent) => {
+    const width = event.nativeEvent.layout.width;
+    if (width <= 0 || width === fontWidths.current[sample]) return;
+    fontWidths.current[sample] = width;
+    const { content, reference } = fontWidths.current;
+    if (content && reference) setBodySize(Math.round(bodyReferenceSize * content / reference));
+  }, [bodyReferenceSize]);
+  const measureContent = useCallback((event: LayoutChangeEvent) => measureFont("content", event), [measureFont]);
+  const measureReference = useCallback((event: LayoutChangeEvent) => measureFont("reference", event), [measureFont]);
   const effectiveBodySize = bodySize * (native ? fontScale : 1);
   const displayScale = (Number(sizes?.displayFormulaSize ?? 100) / 100) * effectiveBodySize / bodyReferenceSize;
   const [selectedFormula, setSelectedFormula] = useState<InlineMath | null>(null);
@@ -370,21 +377,19 @@ export function RichMarkdown({ text, theme, compact, hostId }: {
       retrying: failed.some((query) => query.isFetching),
     };
   }, [formulas, inlineScale, native, spans, text]);
-  const { blocks, nativeMath, retries, retrying } = useQueries({
-    queries: formulas.map((formula) => ({
-      queryKey: ["omni-reader", "math-v4", hostId, color, platform, formulaKey(formula)],
-      queryFn: () => request(formula),
-      staleTime: Infinity,
-      gcTime: 90_000,
-      retry: false,
-      retryOnMount: false,
-    })),
-    combine,
-  });
-  const renderNative = (markdown: string) => (
+  const queries = useMemo(() => formulas.map((formula) => ({
+    queryKey: ["omni-reader", "math-v4", hostId, color, platform, formulaKey(formula)],
+    queryFn: () => request(formula),
+    staleTime: Infinity,
+    gcTime: 90_000,
+    retry: false,
+    retryOnMount: false,
+  })), [color, formulas, hostId, platform, request]);
+  const { blocks, nativeMath, retries, retrying } = useQueries({ queries, combine });
+  const renderNative = useCallback((markdown: string) => (
     <NativeMarkdown text={markdown} formulas={nativeMath} theme={theme} onActions={setSelectedFormula}
       bodySize={bodySize} fontScale={fontScale} />
-  );
+  ), [bodySize, fontScale, nativeMath, theme]);
   return (
     <View ref={root} testID="omni-markdown" style={{ minWidth: 0, gap: compact ? 12 : 16 }}>
       {(nativeMath.length > 0 || blocks.some((block) => block.kind === "table" || block.kind === "formula")) && (
@@ -392,10 +397,10 @@ export function RichMarkdown({ text, theme, compact, hostId }: {
           style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0 }}>
           <View style={{ width: 256, alignItems: "flex-start" }}>
             <StreamedText text="00000000" phase="complete" numberOfLines={1} allowFontScaling={false}
-              onLayout={({ nativeEvent }) => setContentWidth(nativeEvent.layout.width)} />
+              onLayout={measureContent} />
             <StreamedText text="00000000" phase="complete" numberOfLines={1} allowFontScaling={false}
               style={{ fontSize: bodyReferenceSize }}
-              onLayout={({ nativeEvent }) => setReferenceWidth(nativeEvent.layout.width)} />
+              onLayout={measureReference} />
           </View>
         </View>
       )}
@@ -426,7 +431,7 @@ export function RichMarkdown({ text, theme, compact, hostId }: {
       )}
     </View>
   );
-}
+});
 
 function AssistantReader({ item, theme, layout, host, setOriginalReply }:
   PluginTimelineItemProps<ReturnType<typeof messageSchema.parse>> & {

@@ -5,8 +5,15 @@ import { withWorkspaceFile } from "./workspace-file";
 
 const maxPdfBytes = 128 * 1024 * 1024;
 const maxJpegBytes = 750 * 1024;
+const maxCachedLayouts = 8;
+const maxCachedLayoutRuns = 4096;
+const maxCachedPages = 16;
+const maxCachedCharacters = 8 * 1024 * 1024;
 let library: Promise<PDFiumLibrary> | undefined;
 let opened: { key: string; document: PDFiumDocument; runs?: PageRun[] } | undefined;
+const cachedLayouts = new Map<string, PageRun[]>();
+const renderedPages = new Map<string, Awaited<ReturnType<typeof renderPage>>>();
+let cachedCharacters = 0;
 
 function usePdfFile<Result>(root: string, path: string, consume: (key: string, bytes: () => Promise<Buffer>) => Promise<Result>) {
   return withWorkspaceFile(root, path, ["pdf"], async (file, size, revision) => {
@@ -43,6 +50,12 @@ function readSize(page: ReturnType<PDFiumDocument["getPage"]>) {
 }
 
 export async function inspectPdfPages(key: string, bytes: () => Promise<Uint8Array>) {
+  const cached = cachedLayouts.get(key);
+  if (cached) {
+    cachedLayouts.delete(key);
+    cachedLayouts.set(key, cached);
+    return cached;
+  }
   const opened = await openDocument(key, bytes);
   if (opened.runs) return opened.runs;
   const { document } = opened;
@@ -61,10 +74,37 @@ export async function inspectPdfPages(key: string, bytes: () => Promise<Uint8Arr
     }
   }
   opened.runs = runs;
+  if (runs.length <= maxCachedLayoutRuns) {
+    cachedLayouts.set(key, runs);
+    if (cachedLayouts.size > maxCachedLayouts) {
+      const oldest = cachedLayouts.keys().next().value;
+      if (oldest !== undefined) cachedLayouts.delete(oldest);
+    }
+  }
   return runs;
 }
 
 export async function rasterizePdfPage(key: string, bytes: () => Promise<Uint8Array>, pageNumber: number, pixels: number) {
+  const cacheKey = JSON.stringify([key, pageNumber, pixels]);
+  const cached = renderedPages.get(cacheKey);
+  if (cached) {
+    renderedPages.delete(cacheKey);
+    renderedPages.set(cacheKey, cached);
+    return cached;
+  }
+  const image = await renderPage(key, bytes, pageNumber, pixels);
+  cachedCharacters -= renderedPages.get(cacheKey)?.uri.length ?? 0;
+  renderedPages.set(cacheKey, image);
+  cachedCharacters += image.uri.length;
+  for (const [oldestKey, oldest] of renderedPages) {
+    if (renderedPages.size <= maxCachedPages && cachedCharacters <= maxCachedCharacters) break;
+    renderedPages.delete(oldestKey);
+    cachedCharacters -= oldest.uri.length;
+  }
+  return image;
+}
+
+async function renderPage(key: string, bytes: () => Promise<Uint8Array>, pageNumber: number, pixels: number) {
   const { document } = await openDocument(key, bytes);
   const pages = document.getPageCount();
   if (pages < 1) throw new Error("PDF has no pages.");

@@ -21,8 +21,8 @@ export default function contribute(server: PluginServerContext) {
     await openWithDefaultApp(await workspaceDirectory(paseo, workspaceId), path);
     return { opened: true as const };
   });
-  server.handle(readMarkdownPage, async ({ workspaceId, path, offset, revision, fence }, { paseo }) =>
-    loadMarkdownPage(await workspaceDirectory(paseo, workspaceId), path, offset, revision, fence),
+  server.handle(readMarkdownPage, async ({ workspaceId, path, offset, revision, fence, table }, { paseo }) =>
+    loadMarkdownPage(await workspaceDirectory(paseo, workspaceId), path, offset, revision, fence, table),
   );
   server.handle(readDocumentLayout, async ({ workspaceId, path }, { paseo }) => {
     const root = await workspaceDirectory(paseo, workspaceId);

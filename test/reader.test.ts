@@ -3,18 +3,41 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { findFormulas, formulaKey } from "../shared/markdown-math";
+import { findFormulas, formulaKey, markdownParser } from "../shared/markdown-math";
 import { assistantReplacement, shouldReplaceAssistant } from "../client/assistant-turn";
 import { messageSchema } from "../shared/contracts";
 import { readerSettings } from "../shared/reader-settings";
 import { inlineMathMarker, readingBlocks, type InlineMath } from "../shared/reading-blocks";
 import { shareAndroidFile } from "../client/android-file-share";
-import { constrain, fitPages, jumpToPage, moveContacts, pageAt, pageBounds, zoomAt } from "../client/pdf-geometry";
+import { createPageRenderQueue } from "../client/page-render-queue";
+import { createReaderOpenGate } from "../client/reader-open-gate";
+import { constrain, fitPages, jumpToPage, pageAt, pageBounds, visiblePages, zoomAt } from "../client/pdf-geometry";
+import { constrainGrid, panAndPinch, zoomAround, type Contact, type Position } from "../client/viewport-geometry";
 import { createEngine } from "../server/engine";
 import { openWithDefaultApp } from "../server/external-file";
-import { rasterizePdf } from "../server/pdf-engine";
+import { inspectPdf, inspectPdfPages, rasterizePdf, rasterizePdfPage } from "../server/pdf-engine";
 import { loadMarkdownPage, markdownPageBytes } from "../server/markdown-page";
 import { makeLargePdf } from "./pdf-fixture";
+
+test("accepts the first preview only during a burst of opens of the same file", () => {
+  let now = 1_000;
+  const claim = createReaderOpenGate(() => now);
+  const first = Symbol();
+  const duplicate = Symbol();
+  const file = '["host","workspace","/notes.md"]';
+
+  assert.equal(claim(file, first), true);
+  now += 100;
+  assert.equal(claim(file, first), true);
+  assert.equal(claim(file, duplicate), false);
+  assert.equal(claim('["host","workspace","/report.pdf"]', duplicate), true);
+  assert.equal(claim('["host","other-workspace","/notes.md"]', duplicate), true);
+  assert.equal(claim('["other-host","workspace","/notes.md"]', duplicate), true);
+  now += 699;
+  assert.equal(claim(file, duplicate), false);
+  now += 1;
+  assert.equal(claim(file, duplicate), true);
+});
 
 test("claims assistant messages only when Omni Reader can enhance them", () => {
   assert.equal(shouldReplaceAssistant("Read [the PDF](./report.pdf)."), false);
@@ -220,24 +243,80 @@ test("continues between portrait and landscape pages that each fit entirely at 1
   assert.equal(pageAt(layout, 512), 2);
   assert.equal(pageAt(layout, 824), 3);
   const fitted = constrain({ x: 0, y: 0, scale: 1 }, layout);
+  assert.deepEqual(visiblePages(layout, fitted), { first: 1, last: 1 });
+  assert.deepEqual(visiblePages(layout, { ...fitted, y: -12 }), { first: 1, last: 1 });
+  assert.deepEqual(visiblePages(layout, { ...fitted, y: -13 }), { first: 1, last: 2 });
+  assert.deepEqual(visiblePages(layout, { ...fitted, y: -500 }), { first: 2, last: 3 });
   assert.deepEqual(jumpToPage(fitted, 3, layout), { x: 0, y: -824, scale: 1 });
-  assert.deepEqual(zoomAt(fitted, 2, { x: 300, y: 80 }, layout), { x: -300, y: -80, scale: 2 });
+  const zoomed = zoomAt(fitted, 2, { x: 300, y: 80 }, layout);
+  assert.deepEqual(zoomed, { x: -300, y: -80, scale: 2 });
+  assert.deepEqual(visiblePages(layout, zoomed), { first: 1, last: 1 });
+});
+
+test("skips obsolete PDF and Office page requests before they reach the renderer", async () => {
+  const enqueue = createPageRenderQueue();
+  const active = new AbortController();
+  const obsolete = new AbortController();
+  const calls: number[] = [];
+  let resolveFirstPage!: (page: number) => void;
+  const firstPage = new Promise<number>((resolve) => { resolveFirstPage = resolve; });
+  const running = enqueue(active.signal, () => {
+    calls.push(1);
+    return firstPage;
+  });
+  const oldPage = enqueue(obsolete.signal, async () => {
+    calls.push(2);
+    return 2;
+  });
+  const newPage = enqueue(active.signal, async () => {
+    calls.push(8);
+    return 8;
+  });
+  await Promise.resolve();
+  assert.deepEqual(calls, [1]);
+  obsolete.abort();
+  resolveFirstPage(1);
+  assert.equal(await running, 1);
+  await assert.rejects(oldPage, /cancelled/);
+  assert.equal(await newPage, 8);
+  assert.deepEqual(calls, [1, 8]);
 });
 
 test("mouse drag and touch pinch/pan work at the upper edge of a zoomed PDF page", () => {
   const layout = fitPages([{ count: 2, width: 600, height: 800 }], { width: 360, height: 400 });
+  const moveContacts = (position: Position, previous: Contact[], next: Contact[]) =>
+    constrain(panAndPinch(position, previous, next), layout);
   const fitted = constrain({ x: 0, y: 0, scale: 1 }, layout);
   const mouse = [{ id: 1, x: 320, y: 35 }];
   const zoomed = constrain({ x: 0, y: 0, scale: 2 }, layout);
-  const dragged = moveContacts(zoomed, mouse, [{ id: 1, x: 70, y: 35 }], layout);
+  const dragged = moveContacts(zoomed, mouse, [{ id: 1, x: 70, y: 35 }]);
   assert.deepEqual(dragged, { x: -240, y: 0, scale: 2 });
   const fingers = [{ id: 1, x: 130, y: 35 }, { id: 2, x: 230, y: 35 }];
-  const pinched = moveContacts(fitted, fingers, [{ ...fingers[0], x: 60 }, { ...fingers[1], x: 300 }], layout);
+  const pinched = moveContacts(fitted, fingers, [{ ...fingers[0], x: 60 }, { ...fingers[1], x: 300 }]);
   assert.equal(pinched.scale, 2.4);
-  assert.equal(moveContacts(fitted, fingers, [{ ...fingers[0], x: -900 }, fingers[1]], layout).scale, 4);
-  const panned = moveContacts(pinched, mouse, [{ id: 1, x: 30, y: 35 }], layout);
+  assert.equal(moveContacts(fitted, fingers, [{ ...fingers[0], x: -900 }, fingers[1]]).scale, 4);
+  const panned = moveContacts(pinched, mouse, [{ id: 1, x: 30, y: 35 }]);
   assert.ok(panned.x < pinched.x);
   assert.equal(panned.y, pinched.y);
+});
+
+test("keeps the Excel gesture midpoint over the same cell and pans both axes after lifting a finger", () => {
+  const viewport = { width: 300, height: 500 };
+  const content = { width: 1_200, height: 4_000 };
+  const before = { x: -80, y: -140, scale: 1 };
+  const previous = [{ id: 1, x: 70, y: 80 }, { id: 2, x: 170, y: 80 }];
+  const next = [{ id: 1, x: 30, y: 100 }, { id: 2, x: 230, y: 100 }];
+  const pinched = constrainGrid(panAndPinch(before, previous, next), viewport, content);
+  assert.deepEqual(pinched, { x: -270, y: -340, scale: 2 });
+  assert.equal((130 - pinched.x) / pinched.scale, 120 - before.x);
+  assert.equal((100 - pinched.y) / pinched.scale, 80 - before.y);
+  assert.strictEqual(panAndPinch(pinched, next, next.slice(1)), pinched);
+  const panned = panAndPinch(pinched, next.slice(1), [{ id: 2, x: 160, y: 50 }]);
+  assert.deepEqual(panned, { x: -340, y: -390, scale: 2 });
+  const reset = zoomAround(panned, 1, { x: 150, y: 250 });
+  assert.deepEqual(reset, { x: -95, y: -70, scale: 1 });
+  assert.deepEqual(constrainGrid({ x: -999, y: -999, scale: 0.25 }, viewport, content),
+    { x: 0, y: -500, scale: 0.25 });
 });
 
 test("reads Markdown larger than 1 MiB in sections without splitting formulas or changing source links", async () => {
@@ -260,6 +339,45 @@ test("reads Markdown larger than 1 MiB in sections without splitting formulas or
       page = await loadMarkdownPage(folder, path, page.nextOffset, page.revision, page.fence);
       chunks.push(page.source);
     }
+    assert.equal(chunks.join(""), source);
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("continues a long Markdown table without changing its source or the blocks after it", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "omni-markdown-table-"));
+  const path = join(folder, "table.md");
+  const header = "| Station | Reading |\n| --- | --- |\n";
+  const rows = Array.from({ length: 1700 }, (_, index) => `| Station ${index} | 水位 $x^2$ ${"observed ".repeat(7)}|\n`);
+  const source = "Introduction.\n\n" + header + rows.join("") + "\n### End of table\n\n" + "Another paragraph.\n\n".repeat(1800);
+  try {
+    await writeFile(path, source);
+    let page = await loadMarkdownPage(folder, path, 0);
+    const chunks = [page.source];
+    assert.ok(page.table);
+    let continuedPages = 0;
+    let rowCount = 0;
+    let foundHeading = false;
+    while (true) {
+      const tokens = markdownParser.parse(page.markdown, {});
+      rowCount += tokens.filter(({ type, level }) => type === "tr_open" && level === 2).length -
+        tokens.filter(({ type }) => type === "table_open").length;
+      foundHeading ||= tokens.some(({ type, content }) => type === "inline" && content === "End of table");
+      if (page.nextOffset === null) break;
+      const previous = page;
+      page = await loadMarkdownPage(folder, path, previous.nextOffset!, previous.revision, previous.fence, previous.table);
+      if (previous.table) {
+        assert.ok(page.markdown.startsWith(header));
+        assert.ok(!page.source.includes(header));
+        assert.equal(markdownParser.parse(page.markdown, {})[0]?.type, "table_open");
+        continuedPages++;
+      }
+      chunks.push(page.source);
+    }
+    assert.ok(continuedPages > 1);
+    assert.ok(foundHeading);
+    assert.equal(rowCount, rows.length);
     assert.equal(chunks.join(""), source);
   } finally {
     await rm(folder, { recursive: true, force: true });
@@ -312,6 +430,36 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
     assert.notEqual(first.uri, second.uri);
   } finally {
     engine.stop();
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("reuses page layouts and rendered pages across documents and refreshes edited files", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "omni-page-cache-"));
+  const document = makeLargePdf();
+  const path = join(folder, "report.pdf");
+  try {
+    const original = async () => document;
+    const key = `${folder}:office-original`;
+    const originalLayout = await inspectPdfPages(key, original);
+    const first = await rasterizePdfPage(key, original, 2, 256);
+    await inspectPdfPages(`${folder}:other-document`, original);
+    const noReload = async () => { throw new Error("A cached document was loaded again."); };
+    assert.deepEqual(await inspectPdfPages(key, noReload), originalLayout);
+    assert.deepEqual(await rasterizePdfPage(key, noReload, 2, 256), first);
+    const larger = await rasterizePdfPage(key, original, 2, 512);
+    assert.notEqual(larger.uri, first.uri);
+
+    await writeFile(path, document);
+    assert.deepEqual(await inspectPdf(folder, path), originalLayout);
+    const before = await rasterizePdf(folder, path, 2, 256);
+    const edited = document.toString().replaceAll("[0 0 600 800]", "[0 0 800 600]")
+      .replace("0 0.8 0.4 rg", "1 0.2 0.1 rg");
+    await writeFile(path, `${edited}\n`);
+    assert.deepEqual(await inspectPdf(folder, path), [{ count: 2, width: 800, height: 600 }]);
+    const after = await rasterizePdf(folder, path, 2, 256);
+    assert.notEqual(after.uri, before.uri);
+  } finally {
     await rm(folder, { recursive: true, force: true });
   }
 });

@@ -4,14 +4,13 @@
   "description": "Read streaming LaTeX, preview workspace documents and spreadsheets, and zoom and pan PDFs in Paseo.",
   "icon": "assets/icon.png",
   "media": [
-    "assets/chat-en.png",
-    "assets/markdown-en.png",
+    "assets/cover-en.png",
     "assets/pdf-en.png",
-    "assets/office-en.png",
-    "assets/chat-zh-CN.png",
+    "assets/powerpoint-en.png",
+    "assets/excel-zh-CN.png",
     "assets/markdown-zh-CN.png",
-    "assets/pdf-zh-CN.png",
-    "assets/office-zh-CN.png"
+    "assets/chat-zh-CN.png",
+    "assets/settings-zh-CN.png"
   ],
   "translations": {
     "zh-CN": {
@@ -20,5 +19,5 @@
     }
   },
   "requirements": { "paseo": ">=0.17.5" },
-  "build": [["npm", "ci", "--include=dev", "--ignore-scripts"], ["npm", "run", "build"]]
+  "build": [["npm", "ci", "--omit=dev", "--ignore-scripts"], ["npm", "run", "build"]]
 }

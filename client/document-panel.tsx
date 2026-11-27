@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
-import { FlatList, Loading, ScrollView } from "@getpaseo/plugin/client/ui";
+import { Loading } from "@getpaseo/plugin/client/ui";
 import { readStructuredDocument, type DocumentBlock } from "../shared/contracts";
 import { Control, ReadError, Toolbar, useFileGeneration, type Theme } from "./controls";
 import { ExternalFileAction } from "./external-file";
 import { messages } from "./messages";
+import { ReaderFlatList as FlatList, ReaderScrollView as ScrollView } from "./reader-scroll";
 
 function DataTable({ block, theme }: {
   block: Extract<DocumentBlock, { kind: "table" }>; theme: Theme;

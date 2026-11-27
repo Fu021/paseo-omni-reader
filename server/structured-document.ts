@@ -64,7 +64,7 @@ export function loadStructuredDocument(root: string, path: string) {
   const extension = extname(path).slice(1).toLowerCase();
   return withWorkspaceFile(root, path, ["docx", "pptx"], async (file, size) => {
     if (size > officeFileLimit) throw new Error("Document exceeds the preview limit.");
-    const documents = await loadOffice(await file.readFile(), importantPart);
+    const documents = await loadOffice(await file.readFile(), (path) => importantPart.test(path));
     return limitPreview(extension === "docx" ? wordSections(documents) : slideSections(documents));
   });
 }

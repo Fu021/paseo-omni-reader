@@ -4,7 +4,7 @@
   "description": "Read streaming LaTeX, preview workspace documents and spreadsheets, and zoom and pan PDFs in Paseo.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Fu021/paseo-omni-reader.git"
+    "url": "git+https://github.com/Fu021/paseo-omni-reader.git"
   },
   "type": "module",
   "engines": {
@@ -23,19 +23,20 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "prepack": "npm run build",
     "typecheck": "npm run build && tsc --noEmit",
     "pretest": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
     "pretest:office": "npm run build",
     "test:office": "node --import tsx --test test/integration/office.test.ts",
-    "precheck:package": "npm run build",
-    "check:package": "node scripts/check-package.mjs"
+    "prepack:release": "npm run build",
+    "pack:release": "node scripts/pack-release.mjs",
+    "check:package": "npm run pack:release -- --check"
   },
   "dependencies": {
     "@hyzyla/pdfium": "3.0.0",
     "@resvg/resvg-wasm": "2.6.2",
     "@xmldom/xmldom": "0.9.12",
+    "esbuild": "0.28.2",
     "jpeg-js": "0.4.4",
     "markdown-it": "15.0.3",
     "mathjax-full": "3.2.2",
@@ -50,7 +51,6 @@
     "@types/node": "^22.0.0",
     "@types/react": "~19.1.0",
     "@types/yauzl": "3.4.0",
-    "esbuild": "^0.28.2",
     "react": "19.1.0",
     "react-native": "0.81.5",
     "tsx": "^4.20.0",

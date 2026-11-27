@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Image, Keyboard, Text, TextInput, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from "react-native";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Image, Keyboard, Text, TextInput, View, useWindowDimensions, type ViewStyle } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
 import { Loading } from "@getpaseo/plugin/client/ui";
@@ -8,10 +8,12 @@ import { Control, ReadError, Toolbar, useFileGeneration, useWebTitle, type Theme
 import { StructuredPanel } from "./document-panel";
 import { ExternalFileAction } from "./external-file";
 import { messages } from "./messages";
+import { useNativeContacts } from "./native-contacts";
+import { createPageRenderQueue } from "./page-render-queue";
 import {
-  boundZoom, clamp, constrain, fitPages, jumpToPage, moveContacts, pageAt, pageBounds, zoomAt,
-  type Contact, type Point, type Position, type ReaderLayout, type Size,
+  constrain, fitPages, jumpToPage, pageAt, pageBounds, visiblePages, zoomAt, type ReaderLayout,
 } from "./pdf-geometry";
+import { boundZoom, clamp, panAndPinch, type Contact, type Position, type Size } from "./viewport-geometry";
 import { bindWebGestures } from "./web";
 import { WorksheetPanel } from "./worksheet-panel";
 import { ZoomControls } from "./zoom-controls";
@@ -24,21 +26,20 @@ function quality(width: number) {
   return clamp(Math.ceil(width / 256) * 256, 256, 2560);
 }
 
-function nativeContacts(event: GestureResponderEvent, origin: Point): Contact[] {
-  return [...event.nativeEvent.touches].slice(0, 2)
-    .map(({ identifier, pageX, pageY }) => ({ id: Number(identifier), x: pageX - origin.x, y: pageY - origin.y }))
-    .sort((first, second) => first.id - second.id);
-}
-
 export function PdfPanel(props: PluginFilePanelProps) {
   const render = useRpc(renderPdfPage);
-  return <PagedReader {...props} kind="pdf" render={(page, pixels) => render({ workspaceId: props.workspaceId, path: props.file.path, page, pixels })} />;
+  const { workspaceId, file: { path } } = props;
+  const renderPage = useCallback<RenderPage>((page, pixels) => render({ workspaceId, path, page, pixels }),
+    [render, workspaceId, path]);
+  return <PagedReader {...props} kind="pdf" render={renderPage} />;
 }
 
 export function OfficePanel(props: PluginFilePanelProps) {
   const render = useRpc(renderOfficePage);
-  const print = <PagedReader {...props} kind="office" render={(page, pixels) =>
-    render({ workspaceId: props.workspaceId, path: props.file.path, page, pixels })} />;
+  const { workspaceId, file: { path } } = props;
+  const renderPage = useCallback<RenderPage>((page, pixels) => render({ workspaceId, path, page, pixels }),
+    [render, workspaceId, path]);
+  const print = <PagedReader {...props} kind="office" render={renderPage} />;
   return props.file.extension === "xlsx" ? <WorksheetPanel props={props} print={print} /> : print;
 }
 
@@ -60,24 +61,28 @@ function resolvePosition(stored: StoredView | undefined, version: string, geomet
   return constrain({ ...position, y: -(page.top + page.height * fraction) * position.scale }, geometry);
 }
 
-function PageImage({ number, kind, label, errorLabel, retryLabel, render, fileKey, bounds, position, trackWidth, pixels, theme, compact }: {
+const PageImage = memo(function PageImage({
+  number, kind, label, errorLabel, retryLabel, render, enqueue, fileKey, left, top, width, height, pixels, theme, compact,
+}: {
   number: number;
   kind: ReaderKind;
   label: string;
   errorLabel: string;
   retryLabel: string;
   render: RenderPage;
+  enqueue: ReturnType<typeof createPageRenderQueue>;
   fileKey: readonly unknown[];
-  bounds: Size & { top: number };
-  position: Position;
-  trackWidth: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
   pixels: number;
   theme: Theme;
   compact: boolean;
 }) {
   const result = useQuery({
     queryKey: [...fileKey, "page", number, pixels],
-    queryFn: () => render(number, pixels),
+    queryFn: ({ signal }) => enqueue(signal, () => render(number, pixels)),
     placeholderData: (previous) => previous ?? undefined,
     staleTime: Infinity,
     gcTime: 15_000,
@@ -85,9 +90,7 @@ function PageImage({ number, kind, label, errorLabel, retryLabel, render, fileKe
   });
   return (
     <View style={{
-      position: "absolute", left: position.x + (trackWidth - bounds.width) * position.scale / 2,
-      top: position.y + bounds.top * position.scale, width: bounds.width * position.scale,
-      height: bounds.height * position.scale,
+      position: "absolute", left, top, width, height,
       backgroundColor: result.data ? "#ffffff" : theme.colors.surface0,
     }}>
       {result.data ? (
@@ -102,7 +105,7 @@ function PageImage({ number, kind, label, errorLabel, retryLabel, render, fileKe
       )}
     </View>
   );
-}
+});
 
 function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: RenderPage }) {
   const { file, workspaceId, host, layout, theme, kind, render, tab } = props;
@@ -120,14 +123,15 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
   const [stored, setStored] = useState<StoredView>();
   const [draft, setDraft] = useState<string>();
   const [rasterScale, setRasterScale] = useState(1);
+  const [enqueue] = useState(createPageRenderQueue);
   const viewportRef = useRef<View>(null);
   const pointers = useRef<Contact[]>([]);
-  const touchOrigin = useRef<Point>({ x: 0, y: 0 });
   const operations = useRef<Parameters<typeof bindWebGestures>[1] | null>(null);
   const current = useRef<Position | null>(null);
 
   const version = `${file.modifiedAt}:${generation}`;
-  const fileKey = ["omni-reader", kind, host.id, workspaceId, file.path, version];
+  const fileKey = useMemo(() => ["omni-reader", kind, host.id, workspaceId, file.path, version],
+    [kind, host.id, workspaceId, file.path, version]);
   const query = useQuery({
     queryKey: [...fileKey, "layout"],
     queryFn: () => readLayout({ workspaceId, path: file.path }),
@@ -143,35 +147,48 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
   const page = geometry && position ? pageAt(geometry, -position.y / scale) : 1;
   const pageCount = geometry?.pageCount ?? 0;
   const enabled = tabActive && !!position;
-  const top = position ? -position.y / scale : 0;
-  const first = geometry ? Math.max(1, page - 1) : 1;
-  const last = geometry ? Math.min(pageCount, pageAt(geometry, top + viewport.height / scale) + 1, first + 19) : 0;
+  const { first, last } = geometry && position ? visiblePages(geometry, position) : { first: 1, last: 0 };
 
   function update(convert: (position: Position, geometry: ReaderLayout) => Position) {
-    if (!current.current || !geometry) return;
-    const next = convert(current.current, geometry);
+    if (!current.current || !geometry) return false;
+    const before = current.current;
+    const next = convert(before, geometry);
+    if (before.x === next.x && before.y === next.y && before.scale === next.scale) return false;
     current.current = next;
     setStored({ version, geometry, position: next });
+    return true;
+  }
+
+  function pan(previous: Contact[], next: Contact[]) {
+    update((current, dimensions) => constrain(panAndPinch(current, previous, next), dimensions));
   }
 
   function track(next: Contact[]) {
     const previous = pointers.current;
     pointers.current = next;
-    if (next.length && previous.length) update((current, dimensions) => moveContacts(current, previous, next, dimensions));
+    pan(previous, next);
   }
+  const { handlers: nativeGestures, stopInertia } = useNativeContacts(viewportRef, enabled && !web, pan, ({ x, y }) =>
+    update((position, dimensions) => constrain({ ...position, x: position.x + x, y: position.y + y }, dimensions)));
 
-  const changeZoom = (resolve: (scale: number) => number) => update((current, dimensions) => zoomAt(
-    current, boundZoom(resolve(current.scale)),
-    { x: viewport.width / 2, y: Math.min(viewport.height / 2, 120) }, dimensions,
-  ));
+  const changeZoom = (resolve: (scale: number) => number) => {
+    stopInertia();
+    update((current, dimensions) => zoomAt(current, boundZoom(resolve(current.scale)),
+      { x: viewport.width / 2, y: Math.min(viewport.height / 2, 120) }, dimensions));
+  };
   const stepZoom = (factor: number) => changeZoom((scale) => scale * factor);
-  const goTo = (target: number) => update((current, dimensions) =>
-    jumpToPage(current, clamp(target, 1, dimensions.pageCount), dimensions));
-  const fit = (width: boolean) => update((current, dimensions) => {
-    const number = pageAt(dimensions, -current.y / current.scale);
-    const zoom = width ? boundZoom(viewport.width / pageBounds(dimensions, number).width) : 1;
-    return jumpToPage({ ...current, scale: zoom, x: (viewport.width - dimensions.width * zoom) / 2 }, number, dimensions);
-  });
+  const goTo = (target: number) => {
+    stopInertia();
+    update((current, dimensions) => jumpToPage(current, clamp(target, 1, dimensions.pageCount), dimensions));
+  };
+  const fit = (width: boolean) => {
+    stopInertia();
+    update((current, dimensions) => {
+      const number = pageAt(dimensions, -current.y / current.scale);
+      const zoom = width ? boundZoom(viewport.width / pageBounds(dimensions, number).width) : 1;
+      return jumpToPage({ ...current, scale: zoom, x: (viewport.width - dimensions.width * zoom) / 2 }, number, dimensions);
+    });
+  };
   const commitPage = () => {
     if (draft && /^\d+$/.test(draft)) goTo(Number(draft));
     setDraft(undefined);
@@ -187,6 +204,7 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
       fit: () => fit(false),
     };
   });
+  useLayoutEffect(() => stopInertia(), [geometry, stopInertia, version]);
   useEffect(() => {
     if (rasterScale === scale) return;
     const timeout = setTimeout(() => setRasterScale(scale), 150);
@@ -212,6 +230,35 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
         <Toolbar theme={theme}><ExternalFileAction {...props} /></Toolbar>
         <Text style={{ padding: 12, color: theme.colors.foregroundMuted }}>{t("printLayoutUnavailable")}</Text>
       </View>
+    );
+  }
+  let pages: React.ReactNode;
+  if (tabActive && geometry && position) {
+    const numbers = Array.from({ length: Math.min(last - first + 1, 20) }, (_, index) => first + index);
+    const before = Math.max(1, first - 1);
+    const after = Math.min(pageCount, last + 1);
+    if (!web && last < after) numbers.push(after);
+    if (!web && before < first) numbers.push(before);
+    const origin = web ? 0 : pageBounds(geometry, before).top;
+    const pageScale = web ? scale : 1;
+    const images = numbers.map((number) => {
+      const bounds = pageBounds(geometry, number);
+      const left = (geometry.width - bounds.width) * pageScale / 2 + (web ? position.x : 0);
+      const top = (bounds.top - origin) * pageScale + (web ? position.y : 0);
+      return <PageImage key={`${version}:${number}`} {...{
+        number, kind, fileKey, render, enqueue, theme, compact, errorLabel, left, top,
+        width: bounds.width * pageScale, height: bounds.height * pageScale,
+        label: `${pageLabel} ${number}`, retryLabel: t("retry"),
+        pixels: quality(bounds.width * rasterScale * Math.min(2, pixelRatio)),
+      }} />;
+    });
+    const bottom = pageBounds(geometry, after);
+    pages = web ? images : (
+      <View style={{
+        position: "absolute", left: 0, top: 0, width: geometry.width, height: bottom.top + bottom.height - origin,
+        transformOrigin: [0, 0, 0],
+        transform: [{ translateX: position.x }, { translateY: position.y + origin * scale }, { scale }],
+      }}>{images}</View>
     );
   }
   return (
@@ -260,34 +307,16 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
             ? previous
             : { width: bounds.width, height: bounds.height },
         )}
-        onStartShouldSetResponder={web ? undefined : () => enabled}
-        onMoveShouldSetResponder={web ? undefined : () => enabled}
-        onResponderGrant={web ? undefined : (event) => {
-          const { pageX, pageY, locationX, locationY } = event.nativeEvent;
-          touchOrigin.current = { x: pageX - locationX, y: pageY - locationY };
-          pointers.current = nativeContacts(event, touchOrigin.current);
-        }}
-        onResponderMove={web ? undefined : (event) => track(nativeContacts(event, touchOrigin.current))}
-        onResponderRelease={web ? undefined : () => track([])}
-        onResponderTerminate={web ? undefined : () => track([])}
-        onResponderTerminationRequest={web ? undefined : () => false}
+        {...nativeGestures}
         style={[
           { flex: 1, minHeight: 0, overflow: "hidden" },
           web && ({ touchAction: "none", userSelect: "none" } as ViewStyle),
         ]}
       >
-        {geometry && position ? Array.from({ length: last - first + 1 }, (_, index) => {
-          const number = first + index;
-          const bounds = pageBounds(geometry, number);
-          return <PageImage key={`${version}:${number}`} {...{
-            number, kind, fileKey, render, bounds, position, theme, compact, errorLabel,
-            label: `${pageLabel} ${number}`, retryLabel: t("retry"), trackWidth: geometry.width,
-            pixels: quality(bounds.width * rasterScale * Math.min(2, pixelRatio)),
-          }} />;
-        }) : query.isError ? (
+        {!tabActive ? null : pages ?? (query.isError ? (
           <ReadError theme={theme} compact={compact} label={errorLabel} error={query.error}
             retry={t("retry")} onRetry={() => { void query.refetch(); }} />
-        ) : <Loading />}
+        ) : <Loading />)}
       </View>
     </View>
   );

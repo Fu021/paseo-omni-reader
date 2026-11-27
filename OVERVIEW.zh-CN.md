@@ -8,4 +8,6 @@ Omni Reader 为工作区中的 Markdown、PDF、Word、Excel 和 PowerPoint 提�
 
 Markdown 可显示与聊天相同的 LaTeX、切换源码，并随阅读加载大文件。PDF 和带排版的 Office 预览可连续上下滚动。100% 时整页按宽度或高度适配。使用工具栏缩放，也可点击预览后按 `+`、`-` 或 `0`。PDF 预览上限为 128 MiB。在 Paseo 主机安装 LibreOffice 后，最大 24 MiB 的 Office 文件可按 Word 页面、Excel 打印版式和 PowerPoint 幻灯片预览。Excel 还提供无需 LibreOffice 的可滚动只读工作表网格。
 
+在 iOS 和 Android 上，Omni Reader 以全屏显示文件内容，滑动手势留在阅读器内。PDF、带排版的 Office 页面和 Excel 工作表可双指缩放、单指平移。Paseo 0.17.6 中，点全屏右上角的 × 返回文件标题栏，再点 Paseo 的 × 关闭文件，或点全屏图标重新打开。
+
 使用 Paseo 桌面客户端打开本机工作区时，「在外部打开」会使用系统默认应用打开原件。浏览器和桌面端的远程工作区下载副本。iOS 和 Android 通过系统分享交给其他 App。Android 系统分享不可用时，可从 Paseo 文件菜单下载。守护进程读取工作区文件并通过 Paseo 连接返回预览结果，插件无需外部渲染服务。
