@@ -33,8 +33,8 @@ function breakableText(text: string) {
   return parts;
 }
 
-const InlineFormula = memo(function InlineFormula({ math, scrollWidth, textScale, onActions }: {
-  math: InlineMath; scrollWidth?: number; textScale: number; onActions: (math: InlineMath) => void;
+const InlineFormula = memo(function InlineFormula({ math, scrollWidth, textScale, onCopy }: {
+  math: InlineMath; scrollWidth?: number; textScale: number; onCopy: (math: InlineMath) => void;
 }) {
   const { t } = useTranslation(messages);
   const { image, tex } = math;
@@ -46,10 +46,8 @@ const InlineFormula = memo(function InlineFormula({ math, scrollWidth, textScale
       testID="omni-inline-math"
       accessibilityRole="button"
       accessibilityLabel={tex}
-      accessibilityHint={t("formulaActionHint")}
-      onLongPress={() => onActions(math)}
-      accessibilityActions={[{ name: "activate", label: t("formulaActions") }]}
-      onAccessibilityAction={({ nativeEvent }) => { if (nativeEvent.actionName === "activate") onActions(math); }}
+      accessibilityHint={t("formulaCopyHint")}
+      onPress={() => onCopy(math)}
       style={{ width, height, paddingTop: baseline * textScale }}
     >
       <Text allowFontScaling={false} importantForAccessibility="no" style={{ fontSize: 1, lineHeight: 1, color: "transparent" }}>{"\u200B"}</Text>
@@ -64,7 +62,7 @@ const InlineFormula = memo(function InlineFormula({ math, scrollWidth, textScale
 });
 
 function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWidth: number,
-  onActions: (math: InlineMath) => void, fontSize: number, fontScale: number): ReactNode[] {
+  onCopy: (math: InlineMath) => void, fontSize: number, fontScale: number): ReactNode[] {
   const runs: ReactNode[] = [];
   const marks: string[] = [];
   const textScale = fontScale * fontSize / inlineMathReferenceFontSize;
@@ -109,7 +107,7 @@ function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWi
         addText(token.content.slice(offset, match.index));
         const math = formulas[Number(match[1])];
         if (math) runs.push(
-          <InlineFormula key={runs.length} math={math} textScale={textScale} onActions={onActions}
+          <InlineFormula key={runs.length} math={math} textScale={textScale} onCopy={onCopy}
             scrollWidth={math.image.width * textScale > maxWidth ? maxWidth : undefined} />,
         );
         offset = match.index + match[0].length;
@@ -129,8 +127,8 @@ function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWi
   return runs;
 }
 
-function NativeBlock({ source, tokens, theme, formulas, onActions, bodySize, fontScale }: {
-  source: string; tokens: Token[]; theme: Theme; formulas: InlineMath[]; onActions: (math: InlineMath) => void;
+function NativeBlock({ source, tokens, theme, formulas, onCopy, bodySize, fontScale }: {
+  source: string; tokens: Token[]; theme: Theme; formulas: InlineMath[]; onCopy: (math: InlineMath) => void;
   bodySize: number; fontScale: number;
 }) {
   const [width, setWidth] = useState(0);
@@ -166,7 +164,7 @@ function NativeBlock({ source, tokens, theme, formulas, onActions, bodySize, fon
             {!!prefix && <Text style={{ color: theme.colors.foregroundMuted, fontSize, lineHeight: Math.round(fontSize * 1.5) }}>{prefix}</Text>}
             <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", rowGap: 1 }}>
               {inlineRuns(token.children, formulas, theme,
-                width ? Math.max(1, width - indent - (prefix ? 26 : 0)) : Infinity, onActions, fontSize, fontScale)}
+                width ? Math.max(1, width - indent - (prefix ? 26 : 0)) : Infinity, onCopy, fontSize, fontScale)}
             </View>
           </View>
         );
@@ -175,8 +173,8 @@ function NativeBlock({ source, tokens, theme, formulas, onActions, bodySize, fon
   );
 }
 
-export const NativeMarkdown = memo(function NativeMarkdown({ text, formulas, theme, onActions, bodySize, fontScale }: {
-  text: string; formulas: InlineMath[]; theme: Theme; onActions: (math: InlineMath) => void;
+export const NativeMarkdown = memo(function NativeMarkdown({ text, formulas, theme, onCopy, bodySize, fontScale }: {
+  text: string; formulas: InlineMath[]; theme: Theme; onCopy: (math: InlineMath) => void;
   bodySize: number; fontScale: number;
 }) {
   const sections = useMemo(() => {
@@ -203,7 +201,7 @@ export const NativeMarkdown = memo(function NativeMarkdown({ text, formulas, the
     <Fragment key={index}>
       {section.tokens ? (
         <NativeBlock source={text} tokens={section.tokens} theme={theme} formulas={formulas}
-          onActions={onActions} bodySize={bodySize} fontScale={fontScale} />
+          onCopy={onCopy} bodySize={bodySize} fontScale={fontScale} />
       ) : <Markdown>{section.text}</Markdown>}
     </Fragment>
   ));

@@ -4,7 +4,7 @@ Omni Reader provides read-only workspace previews for Markdown, PDF, Word, Excel
 
 Use Paseo 0.17.5 or newer on the daemon and client. The plugin supports browser, desktop, iOS and Android clients. If Paseo asks which Markdown viewer to use, choose Omni Reader and remember the choice.
 
-Inline fractions get room for the numerator and denominator. Standalone equations are centered. Both follow Paseo’s chat content font size, with separate size presets from 50% to 200% in the plugin settings. Hover for LaTeX or click to copy in a browser. Touch and hold any formula in the native app to show or copy its LaTeX. Failed formulas keep their source and offer a retry.
+Inline fractions get room for the numerator and denominator. Standalone equations are centered. Both follow Paseo’s chat content font size, with separate size presets from 50% to 200% in the plugin settings. Hover for LaTeX or click to copy in a browser. On mobile, tap a formula to preview it and copy its LaTeX. The preview includes a **Copy LaTeX source** button. Failed formulas keep their source and offer a retry.
 
 Markdown supports the same LaTeX as chat, a source view, and loading large files as you read. PDF and formatted Office pages scroll vertically. At 100%, an entire page fits the viewport by width or height. Use the toolbar or focus the preview and press `+`, `-`, or `0`. PDFs can be up to 128 MiB. For Office files up to 24 MiB, LibreOffice on the Paseo host renders formatted Word pages, Excel print layouts and PowerPoint slides. Excel also opens in a scrollable read-only worksheet grid that works without LibreOffice.
 

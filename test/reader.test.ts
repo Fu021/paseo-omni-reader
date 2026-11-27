@@ -21,7 +21,7 @@ import { makeLargePdf } from "./pdf-fixture";
 
 test("accepts the first preview only during a burst of opens of the same file", () => {
   let now = 1_000;
-  const claim = createReaderOpenGate(() => now);
+  const { claim, release } = createReaderOpenGate(() => now);
   const first = Symbol();
   const duplicate = Symbol();
   const file = '["host","workspace","/notes.md"]';
@@ -33,10 +33,14 @@ test("accepts the first preview only during a burst of opens of the same file", 
   assert.equal(claim('["host","workspace","/report.pdf"]', duplicate), true);
   assert.equal(claim('["host","other-workspace","/notes.md"]', duplicate), true);
   assert.equal(claim('["other-host","workspace","/notes.md"]', duplicate), true);
-  now += 699;
+  now += 149;
   assert.equal(claim(file, duplicate), false);
   now += 1;
   assert.equal(claim(file, duplicate), true);
+  release(file, first);
+  assert.equal(claim(file, first), false);
+  release(file, duplicate);
+  assert.equal(claim(file, first), true);
 });
 
 test("claims assistant messages only when Omni Reader can enhance them", () => {

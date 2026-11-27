@@ -5,6 +5,8 @@ import { inlineMathReferenceFontSize } from "../shared/reading-blocks";
 import type { Theme } from "./controls";
 import type { Contact, Point } from "./viewport-geometry";
 
+export const webReadingWidth = { maxWidth: "var(--content-max-width, 820px)" } as unknown as ViewStyle;
+
 export const webTableStyles = {
   table: { display: "table", width: "max-content", borderSpacing: 0 },
   row: { display: "table-row" },

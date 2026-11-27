@@ -4,7 +4,7 @@ import {
   useRpc, useSettings, useTranslation, type PluginClientContext, type PluginTimelineItemProps,
 } from "@getpaseo/plugin/client";
 import { copyText, Icon, Markdown, StreamedText, useToast } from "@getpaseo/plugin/client/ui";
-import { Image, Modal, Platform, Pressable, ScrollView as NativeScrollView, Text, View, useWindowDimensions, type LayoutChangeEvent, type TextStyle } from "react-native";
+import { Image, Modal, Platform, Pressable, SafeAreaView, ScrollView as NativeScrollView, Text, View, useWindowDimensions, type LayoutChangeEvent, type TextStyle } from "react-native";
 import { formulaImageUri, formulasPerRequest, markdownKind, messageSchema, renderFormulas, type Formula, type FormulaImage } from "../shared/contracts";
 import { findFormulas, formulaKey, formulaTitlePattern, markdownParser } from "../shared/markdown-math";
 import { inlineMathMarker, inlineMathReferenceFontSize, readingBlocks, type InlineMath, type ReadingBlock } from "../shared/reading-blocks";
@@ -17,7 +17,8 @@ import { ReaderScrollView as ScrollView } from "./reader-scroll";
 import { bindWebFormulas, webTableStyles } from "./web";
 
 const maxDistinctFormulas = 144;
-const inlineFormulaBaseScale = 0.51;
+const inlineFormulaBaseScale = 0.5865;
+const displayFormulaBaseScale = 0.85;
 const displayMathWebReferenceFontSize = 15;
 
 export function registerAssistantReading(client: PluginClientContext): () => void {
@@ -176,6 +177,9 @@ const TableBlock = memo(function TableBlock({ rows, theme, formulas, textScale, 
   ) ?? [], [rows, formulas, textScale, web]);
   return (
     <ScrollView horizontal nestedScrollEnabled testID="omni-table-scroll"
+      keyboardShouldPersistTaps={web ? undefined : "always"}
+      decelerationRate={web ? undefined : "fast"}
+      bounces={web ? undefined : false}
       style={{ alignSelf: "center", flexGrow: 0, maxWidth: "100%" }}>
       <View style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, overflow: "hidden" }}>
         <View role={web ? "table" : undefined} style={web && webTableStyles.table}>
@@ -215,18 +219,20 @@ const TableBlock = memo(function TableBlock({ rows, theme, formulas, textScale, 
 function useCopyFormula() {
   const { t } = useTranslation(messages);
   const toast = useToast();
-  return async (tex: string) => {
+  return useCallback(async (tex: string, showToast = true) => {
     try {
       await copyText(tex);
-      toast.show(t("copied"), { variant: "success" });
+      if (showToast) toast.show(t("copied"), { variant: "success" });
+      return true;
     } catch {
-      toast.error(t("formulaCopyError"));
+      if (showToast) toast.error(t("formulaCopyError"));
+      return false;
     }
-  };
+  }, [t, toast]);
 }
 
-function DisplayFormula({ block, theme, scale, onActions }: {
-  block: Extract<ReadingBlock, { kind: "formula" }>; theme: Theme; scale: number; onActions?: (math: InlineMath) => void;
+function DisplayFormula({ block, theme, scale, onCopy }: {
+  block: Extract<ReadingBlock, { kind: "formula" }>; theme: Theme; scale: number; onCopy?: (math: InlineMath) => void;
 }) {
   const { t } = useTranslation(messages);
   const copy = useCopyFormula();
@@ -242,13 +248,8 @@ function DisplayFormula({ block, theme, scale, onActions }: {
           <Pressable
             testID="omni-display-formula"
             accessibilityRole="button" accessibilityLabel={block.tex}
-            accessibilityHint={t(onActions ? "formulaActionHint" : "copyFormula")}
-            onPress={onActions ? undefined : () => { void copy(block.tex); }}
-            onLongPress={onActions && (() => onActions(math))}
-            accessibilityActions={onActions && [{ name: "activate", label: t("formulaActions") }]}
-            onAccessibilityAction={onActions && (({ nativeEvent }) => {
-              if (nativeEvent.actionName === "activate") onActions(math);
-            })}
+            accessibilityHint={t(onCopy ? "formulaCopyHint" : "copyFormula")}
+            onPress={onCopy ? () => onCopy(math) : () => { void copy(block.tex); }}
             style={Platform.OS === "web" ? { cursor: "pointer" } : undefined}
           >
             <Image
@@ -264,51 +265,63 @@ function DisplayFormula({ block, theme, scale, onActions }: {
   );
 }
 
-function FormulaActions({ formula: { tex, image }, theme, compact, close }: {
-  formula: InlineMath; theme: Theme; compact: boolean; close: () => void;
+type FormulaSelection = { formula: InlineMath; status: "copying" | "copied" | "failed" };
+
+function FormulaPreview({ selection, theme, copy, close }: {
+  selection: FormulaSelection; theme: Theme; copy: (formula: InlineMath) => void; close: () => void;
 }) {
   const { t } = useTranslation(messages);
-  const copy = useCopyFormula();
-  const [showSource, setShowSource] = useState(false);
+  const { formula: { tex, image }, status } = selection;
+  const [dismissedCopy, setDismissedCopy] = useState<FormulaSelection | null>(null);
+  useEffect(() => {
+    if (selection.status !== "copied") return;
+    const timer = setTimeout(() => setDismissedCopy(selection), 2200);
+    return () => clearTimeout(timer);
+  }, [selection]);
   const { height, width } = useWindowDimensions();
   const cardWidth = Math.min(400, width - 32);
-  const previewScale = Math.min(1.6, height * 0.35 / image.height);
+  const previewScale = Math.min(1.6, (cardWidth - 32) / image.width, height * 0.35 / image.height);
   return (
     <Modal transparent animationType="fade" visible onRequestClose={close}
       supportedOrientations={["portrait", "landscape"]}>
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+      <View accessibilityViewIsModal onAccessibilityEscape={close}
+        style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
         <Pressable accessible={false} onPress={close}
           style={{ position: "absolute", inset: 0, backgroundColor: "rgba(0,0,0,0.45)" }} />
-        <View accessibilityViewIsModal onAccessibilityEscape={close} style={{
-          width: cardWidth, maxHeight: height * 0.8, borderRadius: 12, overflow: "hidden",
+        <View testID="omni-formula-preview" style={{
+          width: cardWidth, gap: 10, padding: 16, borderRadius: 12,
           backgroundColor: theme.colors.surface1, borderWidth: 1, borderColor: theme.colors.border,
         }}>
-          <View style={{ flexDirection: "row", alignItems: "center", paddingLeft: 14, paddingRight: 3 }}>
-            <Text accessibilityRole="header" style={{
-              flex: 1, color: theme.colors.foreground, fontWeight: "600",
-            }}>{t("formulaActions")}</Text>
-            <Control icon="X" title={t("closeReader")} onPress={close} theme={theme} compact />
-          </View>
-          <NativeScrollView style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={{ gap: 8, padding: 12, paddingTop: 0 }}>
-            <NativeScrollView horizontal nestedScrollEnabled testID="omni-formula-preview"
-              style={{ flexGrow: 0 }}
-              contentContainerStyle={{ flexGrow: 1, justifyContent: "center", alignItems: "center" }}>
-              <Image accessible accessibilityLabel={tex} fadeDuration={0}
-                source={{ uri: image.uris[0] }} resizeMode="contain"
-                style={{ width: image.width * previewScale, height: image.height * previewScale }} />
-            </NativeScrollView>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 6 }}>
-              <Control title={t("copyFormula")} theme={theme} compact={compact} onPress={() => { close(); void copy(tex); }} />
-              <Control title={t(showSource ? "hideFormula" : "showFormula")} selected={showSource} theme={theme} compact={compact}
-                onPress={() => setShowSource((current) => !current)} />
-            </View>
-            {showSource && (
-              <Text selectable style={{
-                color: theme.colors.foreground, fontFamily: "monospace", fontSize: 15, textAlign: "center",
-              }}>{tex}</Text>
-            )}
+          <Image accessible={false} fadeDuration={0} source={{ uri: image.uris[0] }} resizeMode="contain"
+            style={{ alignSelf: "center", width: image.width * previewScale, height: image.height * previewScale }} />
+          <NativeScrollView horizontal style={{ flexGrow: 0 }}
+            contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}>
+            <Text numberOfLines={1} accessibilityLabel={tex} style={{
+              color: theme.colors.foreground, fontFamily: "monospace", fontSize: 14,
+            }}>{tex.replace(/\r\n?|\n/g, " ")}</Text>
           </NativeScrollView>
+          {status === "failed" && (
+            <Text accessibilityRole="alert" style={{ color: theme.colors.foregroundMuted, textAlign: "center" }}>
+              {t("formulaCopyError")}
+            </Text>
+          )}
+          <View style={{ alignItems: "center" }}>
+            <Control title={t("copyFormula")}
+              theme={theme} compact disabled={status === "copying"} onPress={() => copy({ tex, image })} />
+          </View>
         </View>
+        {status === "copied" && dismissedCopy !== selection && (
+          <SafeAreaView pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0 }}>
+            <View style={{
+              alignSelf: "center", marginTop: 12, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.border,
+              paddingHorizontal: 12, paddingVertical: 8, flexDirection: "row", alignItems: "center", gap: 8,
+              backgroundColor: theme.colors.surface0,
+            }}>
+              <Icon name="CheckCircle2" size={18} color={theme.colors.accent} />
+              <Text accessibilityLiveRegion="polite" style={{ color: theme.colors.foreground }}>{t("copied")}</Text>
+            </View>
+          </SafeAreaView>
+        )}
       </View>
     </Modal>
   );
@@ -338,10 +351,19 @@ export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, h
   const measureContent = useCallback((event: LayoutChangeEvent) => measureFont("content", event), [measureFont]);
   const measureReference = useCallback((event: LayoutChangeEvent) => measureFont("reference", event), [measureFont]);
   const effectiveBodySize = bodySize * (native ? fontScale : 1);
-  const displayScale = (Number(sizes?.displayFormulaSize ?? 100) / 100) * effectiveBodySize / bodyReferenceSize;
-  const [selectedFormula, setSelectedFormula] = useState<InlineMath | null>(null);
+  const displayScale = displayFormulaBaseScale * (Number(sizes?.displayFormulaSize ?? 100) / 100)
+    * effectiveBodySize / bodyReferenceSize;
+  const [selectedFormula, setSelectedFormula] = useState<FormulaSelection | null>(null);
   const root = useRef<View>(null);
   const copy = useCopyFormula();
+  const showAndCopyFormula = useCallback((formula: InlineMath) => {
+    const selection: FormulaSelection = { formula, status: "copying" };
+    setSelectedFormula(selection);
+    void copy(formula.tex, false).then((copied) => {
+      setSelectedFormula((current) =>
+        current === selection ? { formula, status: copied ? "copied" : "failed" } : current);
+    });
+  }, [copy]);
   const webActions = useRef({ copy, colors: theme.colors });
   webActions.current = { copy, colors: theme.colors };
   useEffect(() => {
@@ -387,9 +409,9 @@ export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, h
   })), [color, formulas, hostId, platform, request]);
   const { blocks, nativeMath, retries, retrying } = useQueries({ queries, combine });
   const renderNative = useCallback((markdown: string) => (
-    <NativeMarkdown text={markdown} formulas={nativeMath} theme={theme} onActions={setSelectedFormula}
+    <NativeMarkdown text={markdown} formulas={nativeMath} theme={theme} onCopy={showAndCopyFormula}
       bodySize={bodySize} fontScale={fontScale} />
-  ), [bodySize, fontScale, nativeMath, theme]);
+  ), [bodySize, fontScale, nativeMath, showAndCopyFormula, theme]);
   return (
     <View ref={root} testID="omni-markdown" style={{ minWidth: 0, gap: compact ? 12 : 16 }}>
       {(nativeMath.length > 0 || blocks.some((block) => block.kind === "table" || block.kind === "formula")) && (
@@ -415,7 +437,7 @@ export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, h
             renderCell={native ? renderNative : undefined} />
         );
         return <DisplayFormula key={`${index}:${block.tex}`} block={block} theme={theme} scale={displayScale}
-          onActions={native ? setSelectedFormula : undefined} />;
+          onCopy={native ? showAndCopyFormula : undefined} />;
       })}
       {retries.length > 0 && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4 }}>
@@ -427,7 +449,8 @@ export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, h
         </View>
       )}
       {selectedFormula !== null && (
-        <FormulaActions formula={selectedFormula} theme={theme} compact={compact} close={() => setSelectedFormula(null)} />
+        <FormulaPreview selection={selectedFormula} theme={theme}
+          copy={showAndCopyFormula} close={() => setSelectedFormula(null)} />
       )}
     </View>
   );

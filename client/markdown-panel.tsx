@@ -10,9 +10,11 @@ import { ExternalFileAction } from "./external-file";
 import { RichMarkdown } from "./markdown";
 import { messages } from "./messages";
 import { ReaderFlatList as FlatList, ReaderScrollView as ScrollView } from "./reader-scroll";
+import { webReadingWidth } from "./web";
 
 const firstPage: { offset: number; revision?: string; fence?: Fence; table?: TableContinuation } = { offset: 0 };
-const readingStyle = { width: "100%", maxWidth: 850, alignSelf: "center" } as const;
+const contentFrame = { width: "100%", alignSelf: "center", paddingHorizontal: 8 } as const;
+const nativeReadingWidth = { maxWidth: 820 };
 type Page = RpcOutput<typeof readMarkdownPage>;
 
 export function MarkdownPanel(props: PluginFilePanelProps) {
@@ -41,9 +43,10 @@ export function MarkdownPanel(props: PluginFilePanelProps) {
     error={document.error} retry={t("retry")} onRetry={() => setAttempt((value) => value + 1)} />;
   const singlePage = platform !== "web" && rows.length === 1 && rows[0].nextOffset === null;
   const scrollKey = `${generation}:${attempt}`;
-  const contentStyle = { paddingHorizontal: compact ? 14 : 24, paddingVertical: 16 };
+  const contentStyle = { paddingHorizontal: compact ? 12 : 16, paddingVertical: 16 };
+  const readingWidth = !source && (platform === "web" ? webReadingWidth : nativeReadingWidth);
   const renderPage = useCallback(({ item, index }: Pick<ListRenderItemInfo<Page>, "item" | "index">) => (
-    <View style={[readingStyle, !source && index > 0 && { paddingTop: 12 }]}>
+    <View testID="omni-markdown-file-frame" style={[contentFrame, readingWidth, !source && index > 0 && { paddingTop: 12 }]}>
       {item.source.length === 0 && item.nextOffset === null && index === 0 ? (
         <Text style={{ color: theme.colors.foregroundMuted }}>{t("empty")}</Text>
       ) : source ? (
@@ -52,7 +55,7 @@ export function MarkdownPanel(props: PluginFilePanelProps) {
         }}>{item.nextOffset === null ? item.source : item.source.replace(/\r?\n$/, "")}</Text>
       ) : <RichMarkdown theme={theme} text={item.markdown} compact={compact} hostId={host.id} />}
     </View>
-  ), [compact, host.id, source, t, theme]);
+  ), [compact, host.id, readingWidth, source, t, theme]);
 
   return (
     <View testID="omni-text-panel" style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
@@ -82,7 +85,7 @@ export function MarkdownPanel(props: PluginFilePanelProps) {
           contentContainerStyle={contentStyle}
           renderItem={renderPage}
           ListFooterComponent={
-            <View style={[readingStyle, { alignItems: "flex-start", paddingTop: 8 }]}>
+            <View style={[contentFrame, readingWidth, { alignItems: "flex-start", paddingTop: 8 }]}>
               {error || (document.isFetchingNextPage ? <ActivityIndicator color={theme.colors.foregroundMuted} />
                 : document.hasNextPage && <Control title={t("loadMore")} onPress={loadMore} theme={theme} compact={compact} />)}
             </View>

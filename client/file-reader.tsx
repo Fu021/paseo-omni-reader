@@ -18,16 +18,17 @@ type ReaderTab = PluginFilePanelProps["tab"] & {
 
 type Presentation = "initial" | "fullScreen" | "desktop" | "embedded" | "ignored";
 
-const claimReaderOpen = createReaderOpenGate();
+const readerOpenGate = createReaderOpenGate();
 
-function DesktopReaderBody({ children }: { children: ReactNode }) {
+function DesktopReaderBody({ active, children }: { active: boolean; children: ReactNode }) {
   const [shown, setShown] = useState(false);
   useEffect(() => {
+    if (!active || shown) return;
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => setShown(true));
     });
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [active, shown]);
   return shown ? children : <Loading />;
 }
 
@@ -60,10 +61,11 @@ export function fileReader(Reader: ComponentType<PluginFilePanelProps>) {
     const [nativeLayoutReady, setNativeLayoutReady] = useState(false);
     const [presentation, setPresentation] = useState<Presentation>("initial");
     const requestOpen = useCallback(() => {
-      if (!claimReaderOpen(fileKey, owner)) return false;
+      if (!readerOpenGate.claim(fileKey, owner)) return false;
       setPresentation(native ? "fullScreen" : "desktop");
       return true;
     }, [fileKey, native, owner]);
+    useLayoutEffect(() => () => readerOpenGate.release(fileKey, owner), [fileKey, owner]);
     const canOpen = active !== false && (!native || active === true || nativeLayoutReady);
     useLayoutEffect(() => {
       if (presentation === "initial" && canOpen && !requestOpen()) setPresentation("ignored");
@@ -76,7 +78,11 @@ export function fileReader(Reader: ComponentType<PluginFilePanelProps>) {
     const fullScreen = presentation === "fullScreen" && active !== false;
     const awaitNativeLayout = native && active === undefined && presentation === "initial" && !nativeLayoutReady;
     const showClose = fullScreen || (!layout.compact && !!closeTab);
-    const close = closeTab ?? (() => setPresentation("embedded"));
+    const close = () => {
+      readerOpenGate.release(fileKey, owner);
+      if (closeTab) closeTab();
+      else setPresentation("embedded");
+    };
     const header = (
       <View testID="omni-reader-header" style={{
         flexDirection: "row", alignItems: "center", gap: 8, minHeight: 32,
@@ -119,7 +125,7 @@ export function fileReader(Reader: ComponentType<PluginFilePanelProps>) {
       <View style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
         {header}
         {presentation === "desktop" && (
-          <DesktopReaderBody key={file.path}>
+          <DesktopReaderBody key={file.path} active={active !== false}>
             <Reader {...props} />
           </DesktopReaderBody>
         )}

@@ -4,7 +4,7 @@ import { readerSettings } from "../shared/reader-settings";
 import { messages } from "./messages";
 
 const sizeFields = ["inlineFormulaSize", "displayFormulaSize"] as const;
-const sizePresets = ["50", "70", "85", "100", "115", "135", "160", "200"];
+const sizePresets = ["50", "70", "85", "90", "100", "115", "125", "135", "160", "180", "200"];
 const presetOptions = sizePresets.map((value) => ({ value, label: `${value}%` }));
 
 export function ReaderSettings() {
