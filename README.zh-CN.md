@@ -6,7 +6,7 @@
 
 Omni Reader 是 Paseo 阅览增强插件。它为流式聊天加入 LaTeX 排版，也为工作区里的 Markdown、PDF、Word、Excel 和 PowerPoint 提供只读预览。
 
-![Paseo 中文回复中的行内分数、公式表格、居中公式和文件链接](assets/chat-zh-CN.png)
+![Paseo 英文回复中的行内分数、公式表格、居中公式和文件链接](assets/cover-en.png)
 
 ## 阅览体验
 
@@ -16,11 +16,9 @@ Omni Reader 是 Paseo 阅览增强插件。它为流式聊天加入 LaTeX 排版
 - **Excel 工作表。** 在网格中双向滚动，按底部标签切换工作表。网格显示行号和列标，保留合并单元格和基础样式。列宽随内容扩展，长文本换行并增加行高。手机上可双指缩放、单指平移。在 Paseo 主机安装 LibreOffice 后，可切换到「打印版式」查看图表和打印效果。
 - **外部编辑。** 在 Paseo 桌面客户端中，本机守护进程上的文件可通过「在外部打开」交给系统默认应用打开原件。浏览器和桌面端的远程工作区下载副本。iOS 和 Android 通过系统分享交给其他 App。Android 系统分享不可用时，可从 Paseo 文件菜单下载副本。
 
-| PDF 阅读器 | PowerPoint 预览 |
+| Markdown 与公式字号 | PDF 与 Office 预览 |
 | --- | --- |
-| ![连续滚动中的横版 PDF 航拍图与下一张竖版页面](assets/pdf-en.png) | ![PowerPoint 幻灯片中的折线图、页码和缩放控件](assets/powerpoint-en.png) |
-
-查看[自动换行的 Excel 备注](assets/excel-zh-CN.png)、[带公式和代码的 Markdown 预览](assets/markdown-zh-CN.png)和[双语公式字号设置](assets/settings-zh-CN.png)。
+| ![渲染后的 Markdown 文档，以及分别设置行内和独立公式字号的选项](assets/markdown-en.png) | ![PDF 航拍图、Word 排版页面、带换行备注的 Excel 工作表和 PowerPoint 折线图](assets/documents-en.png) |
 
 ## 从 GitHub 安装
 

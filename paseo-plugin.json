@@ -5,12 +5,8 @@
   "icon": "assets/icon.png",
   "media": [
     "assets/cover-en.png",
-    "assets/pdf-en.png",
-    "assets/powerpoint-en.png",
-    "assets/excel-zh-CN.png",
-    "assets/markdown-zh-CN.png",
-    "assets/chat-zh-CN.png",
-    "assets/settings-zh-CN.png"
+    "assets/markdown-en.png",
+    "assets/documents-en.png"
   ],
   "translations": {
     "zh-CN": {

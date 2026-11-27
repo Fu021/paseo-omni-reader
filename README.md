@@ -16,11 +16,9 @@ Omni Reader adds LaTeX to streaming assistant replies and read-only previews for
 - **Excel worksheets.** Read sheets in a scrollable grid with row and column headings, workbook tabs, merged cells, and basic cell styling. Columns expand to fit their contents and long text wraps onto taller rows. Pinch to zoom and drag with one finger on a phone. Use **Print layout** to view the formatted print output and charts when LibreOffice is available on the Paseo host.
 - **External editing.** In Paseo Desktop, **Open externally** opens the original file in the system’s default app when the workspace is on the local daemon. Browsers and remote desktop workspaces download a copy. On iOS and Android, the action hands a copy to the system share sheet. On Android builds where sharing is unavailable, use **Download** from Paseo’s file menu.
 
-| PDF reader | PowerPoint preview |
+| Markdown and formula settings | PDF and Office previews |
 | --- | --- |
-| ![Landscape PDF survey plate followed by a portrait page in continuous view](assets/pdf-en.png) | ![PowerPoint slide with a line chart, slide navigation and zoom controls](assets/powerpoint-en.png) |
-
-See the [Excel worksheet with wrapped notes](assets/excel-zh-CN.png), [Markdown preview with formulas and code](assets/markdown-zh-CN.png), [Simplified Chinese chat example](assets/chat-zh-CN.png), and [bilingual formula size settings](assets/settings-zh-CN.png).
+| ![Rendered Markdown with LaTeX and separate inline and display formula size controls](assets/markdown-en.png) | ![PDF survey map, formatted Word page, Excel worksheet with wrapped notes, and PowerPoint line chart](assets/documents-en.png) |
 
 ## Install from GitHub
 
