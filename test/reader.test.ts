@@ -138,6 +138,135 @@ test("recognizes each completed formula in a streamed reply and keeps its source
   assert.equal(findFormulas(next + "\n````").at(-1)?.tex, "z=4\n```");
 });
 
+test("keeps multiline inline formulas with surrounding list text and standalone formulas as blocks", () => {
+  const list = String.raw`1. 固定乘子，求本轮的
+   \(x_k\)
+2. 用本轮的
+   \(x_k\)
+   更新乘子`;
+  const listSpans = findFormulas(list);
+  assert.deepEqual(listSpans.map(({ tex, display, block }) => ({ tex, display, block })), [
+    { tex: "x_k", display: false, block: false },
+    { tex: "x_k", display: false, block: false },
+  ]);
+  const image = { uris: ["data:image/png;base64,aGVsbG8="], width: 24, height: 18, baseline: 13 };
+  const images = new Map(listSpans.map((span) => [formulaKey(span), image]));
+  const nativeMath: InlineMath[] = [];
+  assert.deepEqual(readingBlocks(list, listSpans, images, false, nativeMath), [{
+    kind: "markdown", text: "1. 固定乘子，求本轮的 \uE000omni0\uE001\n2. 用本轮的 \uE000omni1\uE001 更新乘子",
+  }]);
+  assert.deepEqual(nativeMath, [{ image, tex: "x_k" }, { image, tex: "x_k" }]);
+  const [web] = readingBlocks(list, listSpans, images, true);
+  assert.equal(web.kind, "markdown");
+  const tokens = markdownParser.parse(web.text, {});
+  assert.equal(tokens.filter(({ type }) => type === "list_item_open").length, 2);
+  assert.deepEqual(tokens.filter(({ type }) => type === "inline").map(({ children }) =>
+    children?.map(({ type }) => type)), [["text", "image"], ["text", "image", "text"]]);
+
+  const paragraph = String.raw`文字
+\(x_k\)
+文字`;
+  assert.deepEqual(findFormulas(paragraph).map(({ display, block }) => ({ display, block })), [
+    { display: false, block: false },
+  ]);
+
+  const blocks = String.raw`before
+
+\(y=3\)
+
+\[z=4\]
+
+$$q=5$$`;
+  assert.deepEqual(findFormulas(blocks).map(({ tex, display, block }) => ({ tex, display, block })), [
+    { tex: "y=3", display: true, block: true },
+    { tex: "z=4", display: true, block: true },
+    { tex: "q=5", display: true, block: true },
+  ]);
+});
+
+test("joins soft wraps around inline formulas in nested lists, quotes, and adjacent formula lines", () => {
+  const cases = [
+    {
+      source: ["1. Outer", "   - 中文", "     $a_1$", "     and English.", "   - Next item"].join("\n"),
+      expected: "1. Outer\n   - 中文 \uE000omni0\uE001 and English.\n   - Next item",
+    },
+    {
+      source: ["> 中文", String.raw`> \(a_1\)`, "> and English."].join("\r\n"),
+      expected: "> 中文 \uE000omni0\uE001 and English.",
+    },
+    {
+      source: ["3. $a_1$", String.raw`   \(a_2\)`, "   and English."].join("\n"),
+      expected: "3. \uE000omni0\uE001 \uE000omni1\uE001 and English.",
+    },
+    {
+      source: ["单个空格 ", "$a_1$", "接着读"].join("\n"),
+      expected: "单个空格 \uE000omni0\uE001 接着读",
+    },
+  ];
+  const image = { uris: ["data:image/png;base64,aGVsbG8="], width: 24, height: 18 };
+  for (const { source, expected } of cases) {
+    const spans = findFormulas(source);
+    const images = new Map(spans.map((span) => [formulaKey(span), image]));
+    assert.deepEqual(readingBlocks(source, spans, images, false, []), [{ kind: "markdown", text: expected }]);
+  }
+});
+
+test("retains intentional breaks, paragraph boundaries, and escapes around formulas", () => {
+  const source = [
+    "1. 故意换行  ",
+    String.raw`   \(x_1\)` + "\\",
+    "   continued",
+    "",
+    "   new paragraph",
+    "2. Next item",
+    "   $x_2$\\",
+    "   after backslash",
+    "3. Literal " + "\\\\",
+    "   $x_3$",
+    "",
+    String.raw`\(x_4\)`,
+  ].join("\n");
+  const image = { uris: ["data:image/png;base64,aGVsbG8="], width: 24, height: 18 };
+  const spans = findFormulas(source);
+  const images = new Map(spans.map((span) => [formulaKey(span), image]));
+  const [text, formula] = readingBlocks(source, spans, images, false, []);
+  assert.equal(formula.kind, "formula");
+  assert.equal(text.kind, "markdown");
+  assert.equal(text.text, [
+    "1. 故意换行  ",
+    "   \uE000omni0\uE001\\",
+    "   continued",
+    "",
+    "   new paragraph",
+    "2. Next item \uE000omni1\uE001\\",
+    "   after backslash",
+    "3. Literal " + "\\\\" + " \uE000omni2\uE001",
+    "",
+    "",
+  ].join("\n"));
+  const tokens = markdownParser.parse(text.text, {});
+  assert.equal(tokens.flatMap(({ children }) => children ?? []).filter(({ type }) => type === "hardbreak").length, 3);
+
+  const pending = readingBlocks("中文\n$x_1$\nEnglish", findFormulas("中文\n$x_1$\nEnglish"), new Map());
+  assert.deepEqual(pending, [{ kind: "markdown", text: "中文 $x\\_1$ English" }]);
+});
+
+test("keeps consecutive equations inline around Chinese punctuation and Latin notation", () => {
+  const text = String.raw`整理就是 \(4x_1+3x_2=18\)、\(3x_1+4x_2=18\)。两式相减得 \(x_1=x_2\)，再代回得 \(7x_1=18\)。因此本轮的 \(x_k=(18/7,18/7)^{\mathsf T}\)。`;
+  const spans = findFormulas(text);
+  assert.deepEqual(spans.map(formulaKey), [
+    "inline:4x_1+3x_2=18", "inline:3x_1+4x_2=18", "inline:x_1=x_2", "inline:7x_1=18", String.raw`inline:x_k=(18/7,18/7)^{\mathsf T}`,
+  ]);
+  const image = { uris: ["data:image/png;base64,aGVsbG8="], width: 40, height: 18 };
+  const images = new Map(spans.map((span) => [formulaKey(span), image]));
+  const [block] = readingBlocks(text, spans, images, true);
+  assert.equal(block.kind, "markdown");
+  const [paragraph] = markdownParser.parse(block.text, {}).filter(({ type }) => type === "inline");
+  assert.deepEqual(paragraph.children?.map(({ type, content }) => type === "image" ? "math" : content), [
+    "整理就是 ", "math", "、", "math", "。两式相减得 ", "math", "，再代回得 ", "math", "。因此本轮的 ", "math", "。",
+  ]);
+});
+
 test("renders formulas while the document queue is full", async () => {
   const folder = await mkdtemp(join(tmpdir(), "omni-worker-"));
   const engine = createEngine();

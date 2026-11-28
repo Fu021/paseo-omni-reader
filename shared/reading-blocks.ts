@@ -61,12 +61,25 @@ export function readingBlocks(
   nativeMath?: InlineMath[], inlineScale = 1,
 ): ReadingBlock[] {
   const result: ReadingBlock[] = [];
+  const softBreaks = spans.flatMap((span) => span.softBreaks ?? []);
+  let breakIndex = 0;
   let cursor = 0;
   let parts: string[] = [];
+  const appendSource = (end: number) => {
+    let offset = cursor;
+    while (breakIndex < softBreaks.length && softBreaks[breakIndex].end <= end) {
+      const softBreak = softBreaks[breakIndex++];
+      if (softBreak.start < offset) continue;
+      parts.push(source.slice(offset, softBreak.start), " ");
+      offset = softBreak.end;
+    }
+    parts.push(source.slice(offset, end));
+    return offset === end && offset !== cursor;
+  };
   for (const span of spans) {
     const candidate = images.get(formulaKey(span));
     const image = candidate?.uris.every((uri) => formulaImageUri.test(uri)) ? candidate : undefined;
-    parts.push(source.slice(cursor, span.start));
+    const joinedToPreviousLine = appendSource(span.start);
     const raw = source.slice(span.start, span.end);
     if (span.block) {
       layoutBlocks(parts.join(""), result);
@@ -84,7 +97,7 @@ export function readingBlocks(
         parts.push(`\uE000omni${index}\uE001`);
       } else {
         const lineStart = source.lastIndexOf("\n", span.start - 1) + 1;
-        if (/^[ \t]*$/.test(source.slice(lineStart, span.start))) parts.push("\u2060");
+        if (!joinedToPreviousLine && /^[ \t]*$/.test(source.slice(lineStart, span.start))) parts.push("\u2060");
         parts.push(inlineFormula(span, inlineImage, includeSource));
       }
     } else {
@@ -92,7 +105,7 @@ export function readingBlocks(
     }
     cursor = span.end;
   }
-  parts.push(source.slice(cursor));
+  appendSource(source.length);
   layoutBlocks(parts.join(""), result);
   return result;
 }
