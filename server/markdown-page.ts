@@ -1,5 +1,6 @@
 import { StringDecoder } from "node:string_decoder";
-import { markdownExtensions, maxFormulaLength, maxMarkdownTableLine, type Fence, type TableContinuation } from "../shared/contracts";
+import type { Fence, TableContinuation } from "../shared/contracts";
+import { markdownExtensions, maxFormulaLength, maxMarkdownTableLine } from "../shared/markdown-constants";
 import { findFormulas, lineOffsets, markdownParser, possibleMath } from "../shared/markdown-math";
 import { rebaseMarkdownLinks } from "./markdown-links";
 import { markdownPreviewPosition } from "./markdown-index";

@@ -1,5 +1,6 @@
 import MarkdownIt from "markdown-it";
-import { maxFormulaLength, type Formula, type FormulaImage } from "./contracts";
+import type { Formula, FormulaImage } from "./contracts";
+import { maxFormulaLength } from "./markdown-constants";
 
 export const markdownParser = new MarkdownIt({ html: true });
 export const possibleMath = /[$]|\\[([]|(?:`{3,}|~{3,})[ \t]*math\b/i;

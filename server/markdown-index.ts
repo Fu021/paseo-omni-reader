@@ -1,8 +1,9 @@
 import type { FileHandle } from "node:fs/promises";
 import type { RpcOutput } from "@getpaseo/plugin";
 import { parseDocument, stringify } from "yaml";
-import { markdownExtensions, markdownSearchPageSize, maxMarkdownTableLine, type Fence, type MarkdownSearchOptions,
-  type TableContinuation, type readMarkdownInfo, type readMarkdownSource, type searchMarkdownFile } from "../shared/contracts";
+import type { Fence, MarkdownSearchOptions, TableContinuation, readMarkdownInfo, readMarkdownSource,
+  searchMarkdownFile } from "../shared/contracts";
+import { markdownExtensions, markdownSearchPageSize, maxMarkdownTableLine } from "../shared/markdown-constants";
 import { markdownParser } from "../shared/markdown-math";
 import { markdownReferences } from "../shared/markdown-references";
 import { withWorkspaceFile } from "./workspace-file";

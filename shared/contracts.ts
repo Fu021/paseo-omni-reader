@@ -1,7 +1,9 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { maxFormulaLength, maxMarkdownTableLine } from "./markdown-constants";
 
-export const markdownExtensions = ["md", "markdown", "mdown", "mkd", "mkdn", "mdwn"];
+export { markdownExtensions, markdownSearchPageSize, maxFormulaLength, maxMarkdownTableLine } from "./markdown-constants";
+
 export const officeExtensions = ["docx", "xlsx", "pptx"];
 export const markdownKind = "rich-assistant-markdown";
 export const messageSchema = z.object({
@@ -9,7 +11,6 @@ export const messageSchema = z.object({
   phase: z.enum(["streaming", "complete"]).optional(),
   messageId: z.string().optional(),
 });
-export const maxFormulaLength = 2400;
 export const formulasPerRequest = 12;
 export const formulaImageUri = /^data:image\/(?:png|svg\+xml);base64,/;
 
@@ -30,7 +31,6 @@ const fenceSchema = z.object({
 });
 export type Fence = z.infer<typeof fenceSchema>;
 
-export const maxMarkdownTableLine = 8192;
 const markdownTableLine = z.string().min(1).max(maxMarkdownTableLine).regex(/^[^\r\n]+$/);
 const tableContinuation = z.object({ header: markdownTableLine, separator: markdownTableLine });
 export type TableContinuation = z.infer<typeof tableContinuation>;
@@ -93,7 +93,6 @@ const markdownSearchOptions = z.object({
   matchCase: z.boolean(), wholeWord: z.boolean(), regex: z.boolean(),
 });
 export type MarkdownSearchOptions = z.infer<typeof markdownSearchOptions>;
-export const markdownSearchPageSize = 512;
 
 export const searchMarkdownFile = defineRpc({
   name: "markdown.search",
