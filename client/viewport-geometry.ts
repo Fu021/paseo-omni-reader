@@ -30,6 +30,20 @@ export function zoomAround(position: Position, scale: number, anchor: Point, tar
   };
 }
 
+export function zoomGridScroll(scroll: Position, scale: number, anchor: Point, viewport: Size, content: Size, frozen: Size) {
+  const inset = (zoom: number) => ({
+    x: Math.min(frozen.width * zoom, viewport.width / 3),
+    y: Math.min(frozen.height * zoom, viewport.height / 3),
+  });
+  const before = inset(scroll.scale);
+  const after = inset(scale);
+  const position = zoomAround({ x: -scroll.x, y: -scroll.y, scale: scroll.scale }, scale,
+    { x: Math.max(0, anchor.x - before.x), y: Math.max(0, anchor.y - before.y) },
+    { x: Math.max(0, anchor.x - after.x), y: Math.max(0, anchor.y - after.y) });
+  const bounds = constrainGrid(position, { width: viewport.width - after.x, height: viewport.height - after.y }, content);
+  return { x: Math.abs(bounds.x), y: Math.abs(bounds.y), scale };
+}
+
 function midpoint([first, second = first]: Contact[]): Point {
   return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
 }

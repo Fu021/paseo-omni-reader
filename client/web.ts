@@ -1,7 +1,7 @@
 import type { ViewStyle } from "react-native";
 import { formulaImageUri } from "../shared/contracts";
 import { formulaTitlePattern, formulaTitlePrefix } from "../shared/markdown-math";
-import { inlineMathReferenceFontSize } from "../shared/reading-blocks";
+import { inlineMathReferenceFontSize, type InlineMath } from "../shared/reading-blocks";
 import type { Theme } from "./controls";
 import type { Contact, Point } from "./viewport-geometry";
 
@@ -103,20 +103,88 @@ export function focusWebReader(node: unknown) {
   if (node instanceof HTMLElement) node.focus({ preventScroll: true });
 }
 
-export function bindWorksheetGrid(node: unknown, open: (point: Point) => boolean) {
+type WebZoomActions = { zoom: (factor: number, anchor?: Point) => void; fit: () => void };
+
+function viewportPoint(node: HTMLElement, event: { clientX: number; clientY: number }): Point {
+  const { left, top } = node.getBoundingClientRect();
+  return { x: event.clientX - left, y: event.clientY - top };
+}
+
+function zoomFromWheel(node: HTMLElement, event: WheelEvent, zoom: WebZoomActions["zoom"]) {
+  if (!event.ctrlKey && !event.metaKey) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  const units = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? node.clientHeight : 1;
+  const delta = Math.max(-160, Math.min(160, event.deltaY * units));
+  if (delta) zoom(Math.exp(-delta / 500), viewportPoint(node, event));
+  return true;
+}
+
+function bindReaderZoomKeys(node: HTMLElement, actions: WebZoomActions, signal: AbortSignal) {
+  node.ownerDocument.defaultView?.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.altKey || event.isComposing) return;
+    const modified = event.ctrlKey || event.metaKey;
+    const target = event.target;
+    if (target instanceof Element && target.closest("input,textarea,[contenteditable=true],[role=textbox]")) return;
+    if (target !== node && !(modified && (node.contains(node.ownerDocument.activeElement) || node.matches(":hover")))) return;
+    switch (event.key) {
+      case "+": case "=": actions.zoom(1.25); break;
+      case "-": actions.zoom(1 / 1.25); break;
+      case "0": actions.fit(); break;
+      default: return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }, { capture: true, signal });
+}
+
+function bindReaderScrollKeys(node: HTMLElement, scroll: (delta: Point) => void, signal: AbortSignal) {
+  node.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey ||
+      event.shiftKey || event.isComposing || event.target !== node) return;
+    switch (event.key) {
+      case "ArrowLeft": scroll({ x: -48, y: 0 }); break;
+      case "ArrowRight": scroll({ x: 48, y: 0 }); break;
+      case "ArrowUp": scroll({ x: 0, y: -48 }); break;
+      case "ArrowDown": scroll({ x: 0, y: 48 }); break;
+      case "PageUp": scroll({ x: 0, y: -node.clientHeight * 0.9 }); break;
+      case "PageDown": scroll({ x: 0, y: node.clientHeight * 0.9 }); break;
+      default: return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }, { signal });
+}
+
+export function bindWorksheetGrid(node: unknown, actions: {
+  open: (point: Point) => boolean;
+  dragMode: () => boolean;
+  zoom: (factor: number | undefined, anchor: Point, scroll: Point) => void;
+}) {
   if (!(node instanceof HTMLElement)) return;
+  const listeners = new AbortController();
+  const options = { signal: listeners.signal };
+  const horizontal = node.querySelector<HTMLElement>('[data-testid="omni-worksheet-horizontal"]');
+  const vertical = node.querySelector<HTMLElement>('[data-testid="omni-worksheet-vertical"]');
+  if (!horizontal || !vertical) return;
+  const changeZoom = (factor: number | undefined, anchor = { x: node.clientWidth / 2, y: node.clientHeight / 2 }) =>
+    actions.zoom(factor, anchor, { x: horizontal.scrollLeft, y: vertical.scrollTop });
+  let drag: { id: number; origin: Point; scroll: Point; cursor: string } | undefined;
+  const endDrag = (event?: PointerEvent) => {
+    if (!drag || event && event.pointerId !== drag.id) return;
+    const { id, cursor } = drag;
+    drag = undefined;
+    node.style.cursor = cursor;
+    if (node.hasPointerCapture(id)) node.releasePointerCapture(id);
+  };
   const contextMenu = (event: MouseEvent) => {
-    const bounds = node.getBoundingClientRect();
-    if (!open({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })) return;
+    if (!actions.open(viewportPoint(node, event))) return;
     event.preventDefault();
     event.stopPropagation();
   };
   const wheel = (event: WheelEvent) => {
-    if (event.ctrlKey || event.metaKey || !(event.target instanceof Element) ||
+    if (zoomFromWheel(node, event, changeZoom) || !(event.target instanceof Element) ||
       !event.target.closest('[data-testid^="omni-worksheet-frozen-"]')) return;
-    const horizontal = node.querySelector<HTMLElement>('[data-testid="omni-worksheet-horizontal"]');
-    const vertical = node.querySelector<HTMLElement>('[data-testid="omni-worksheet-vertical"]');
-    if (!horizontal || !vertical) return;
     const before = { x: horizontal.scrollLeft, y: vertical.scrollTop };
     const shift = event.shiftKey && !event.deltaX;
     const stepX = event.deltaMode === 2 ? horizontal.clientWidth : event.deltaMode === 1 ? 16 : 1;
@@ -125,11 +193,36 @@ export function bindWorksheetGrid(node: unknown, open: (point: Point) => boolean
     if (!shift) vertical.scrollTop += event.deltaY * stepY;
     if (horizontal.scrollLeft !== before.x || vertical.scrollTop !== before.y) event.preventDefault();
   };
-  node.addEventListener("contextmenu", contextMenu, true);
-  node.addEventListener("wheel", wheel, { passive: false });
+  node.addEventListener("contextmenu", contextMenu, { ...options, capture: true });
+  node.addEventListener("wheel", wheel, { ...options, passive: false });
+  node.addEventListener("pointerdown", (event) => {
+    if (drag || event.pointerType !== "mouse" || !(event.target instanceof Element)) return;
+    const text = event.target.closest("[data-worksheet-cell-text]");
+    if (event.button !== 1 && (event.button !== 0 || event.ctrlKey)) return;
+    node.focus({ preventScroll: true });
+    if (event.button === 0 && text && !actions.dragMode()) return;
+    event.preventDefault();
+    node.setPointerCapture(event.pointerId);
+    drag = { id: event.pointerId, origin: { x: event.clientX, y: event.clientY },
+      scroll: { x: horizontal.scrollLeft, y: vertical.scrollTop }, cursor: node.style.cursor };
+    node.style.cursor = "grabbing";
+  }, options);
+  node.addEventListener("pointermove", (event) => {
+    if (!drag || drag.id !== event.pointerId) return;
+    horizontal.scrollLeft = drag.scroll.x + drag.origin.x - event.clientX;
+    vertical.scrollTop = drag.scroll.y + drag.origin.y - event.clientY;
+  }, options);
+  for (const name of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
+    node.addEventListener(name, endDrag, options);
+  }
+  bindReaderZoomKeys(node, { zoom: changeZoom, fit: () => changeZoom(undefined) }, listeners.signal);
+  bindReaderScrollKeys(node, (delta) => {
+    horizontal.scrollLeft += delta.x;
+    vertical.scrollTop += delta.y;
+  }, listeners.signal);
   return () => {
-    node.removeEventListener("contextmenu", contextMenu, true);
-    node.removeEventListener("wheel", wheel);
+    endDrag();
+    listeners.abort();
   };
 }
 
@@ -224,7 +317,9 @@ export function bindWebSliderKeys(node: unknown, change: (value: number) => void
 }
 
 export function bindWebFormulas(node: unknown, actions: {
-  copy: (tex: string) => void; colors: () => Pick<Theme["colors"], "foreground" | "surface2" | "border">;
+  preview: (formula: InlineMath) => void;
+  colors: () => Pick<Theme["colors"], "foreground" | "surface2" | "border">;
+  isPreviewOpen: () => boolean;
 }) {
   if (!(node instanceof HTMLElement)) return;
   const scope = node;
@@ -256,6 +351,10 @@ export function bindWebFormulas(node: unknown, actions: {
       image.dataset.omniFormula = title;
       image.removeAttribute("title");
     }
+    if (!image.closest("a")) {
+      image.setAttribute("role", "button");
+      image.tabIndex = 0;
+    }
     if (formula.appliedStyle === image.style.cssText) return;
     image.style.cursor = "pointer";
     image.style.width = `${formula.width / inlineMathReferenceFontSize}em`;
@@ -274,11 +373,15 @@ export function bindWebFormulas(node: unknown, actions: {
   const activate = (event: Event) => {
     const target = event.target;
     if (!(target instanceof HTMLImageElement) || target.closest("a")) return;
-    const tex = formulas.get(target)?.tex;
-    if (!tex) return;
+    const formula = formulas.get(target);
+    const uri = target.getAttribute("src");
+    if (!formula || !uri || !formulaImageUri.test(uri)) return;
     event.preventDefault();
     event.stopPropagation();
-    actions.copy(tex);
+    hovered = null;
+    focused = null;
+    hideTooltip();
+    actions.preview({ tex: formula.tex, image: { width: formula.width, height: formula.height, uris: [uri] } });
   };
   const keydown = (event: KeyboardEvent) => {
     if (!event.repeat && (event.key === "Enter" || event.key === " ")) activate(event);
@@ -316,6 +419,7 @@ export function bindWebFormulas(node: unknown, actions: {
   }
 
   function showTooltip() {
+    if (actions.isPreviewOpen()) return hideTooltip();
     const anchor = hovered ?? focused;
     const tex = anchor instanceof HTMLImageElement ? formulas.get(anchor)?.tex : anchor?.getAttribute("aria-label");
     if (!tex) return hideTooltip();
@@ -406,7 +510,7 @@ export function bindWebGestures(node: unknown, actions: {
   selectedText?: () => string;
   onCopied?: () => void;
   scroll: (delta: Point) => void;
-  zoom: (factor: number) => void;
+  zoom: WebZoomActions["zoom"];
   fit: () => void;
 }) {
   if (!(node instanceof HTMLElement)) return;
@@ -414,10 +518,7 @@ export function bindWebGestures(node: unknown, actions: {
   const listeners = new AbortController();
   const options = { signal: listeners.signal };
   const pointers = new Map<number, Contact>();
-  const position = (event: { clientX: number; clientY: number }) => {
-    const { left, top } = surface.getBoundingClientRect();
-    return { x: event.clientX - left, y: event.clientY - top };
-  };
+  const position = (event: { clientX: number; clientY: number }) => viewportPoint(surface, event);
   const changed = (event: PointerEvent) => {
     const selecting = actions.contacts([...pointers.values()].slice(0, 2), event.pointerType);
     surface.style.cursor = selecting || (!pointers.size && actions.overText?.(position(event))) ? "text"
@@ -447,7 +548,7 @@ export function bindWebGestures(node: unknown, actions: {
     surface.addEventListener(name, up, options);
   }
   surface.addEventListener("wheel", (event) => {
-    if (event.ctrlKey || event.metaKey) return;
+    if (zoomFromWheel(surface, event, actions.zoom)) return;
     event.preventDefault();
     const units = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? surface.clientHeight : 1;
     actions.scroll({ x: event.deltaX * units, y: event.deltaY * units });
@@ -460,21 +561,8 @@ export function bindWebGestures(node: unknown, actions: {
     event.preventDefault();
     event.stopPropagation();
   }, options);
-  surface.addEventListener("keydown", (event) => {
-    if (event.ctrlKey || event.metaKey || event.altKey || event.target !== surface) return;
-    switch (event.key) {
-      case "+": case "=": actions.zoom(1.25); break;
-      case "-": actions.zoom(1 / 1.25); break;
-      case "0": actions.fit(); break;
-      case "ArrowUp": actions.scroll({ x: 0, y: -48 }); break;
-      case "ArrowDown": actions.scroll({ x: 0, y: 48 }); break;
-      case "PageUp": actions.scroll({ x: 0, y: -surface.clientHeight * 0.9 }); break;
-      case "PageDown": actions.scroll({ x: 0, y: surface.clientHeight * 0.9 }); break;
-      default: return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-  }, options);
+  bindReaderZoomKeys(surface, actions, listeners.signal);
+  bindReaderScrollKeys(surface, actions.scroll, listeners.signal);
   surface.style.cursor = "grab";
   return () => {
     listeners.abort();

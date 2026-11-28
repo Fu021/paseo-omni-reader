@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, Text, View, type ScrollView as ScrollViewInstance, type TextStyle } from "react-native";
+import { Platform, Pressable, Text, View, type ScrollView as ScrollViewInstance, type TextStyle, type ViewStyle } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
 import { copyText, Icon, Loading, ScrollView } from "@getpaseo/plugin/client/ui";
@@ -10,7 +10,7 @@ import { messages } from "./messages";
 import { useNativeContacts } from "./native-contacts";
 import { ReaderFindBar, useFindResults, useReaderFindShortcuts, useReaderFindVisibility } from "./reader-find";
 import { useReaderNotice } from "./reader-notice";
-import { boundZoom, clamp, constrainGrid, panAndPinch, zoomAround, type Contact, type Point, type Position, type Size } from "./viewport-geometry";
+import { boundZoom, clamp, constrainGrid, panAndPinch, zoomAround, zoomGridScroll, type Contact, type Point, type Position, type Size } from "./viewport-geometry";
 import { bindWorksheetGrid, bindWorksheetMenuDismiss, focusReaderFind, readerSelection, setWebTitle } from "./web";
 import { ZoomControls } from "./zoom-controls";
 
@@ -71,10 +71,10 @@ function cellAddress(text: string): CellAddress | undefined {
   return { row: Number(match[2]) - 1, column: column - 1 };
 }
 
-function WorksheetGrid({ sheet, scale, theme, onZoom, focus, pinned, onPin, matches, active, compact, findOpen }: {
+function WorksheetGrid({ sheet, scale, theme, onZoom, focus, pinned, onPin, matches, active, compact, findOpen, dragMode, tabActive }: {
   sheet: Worksheet; scale: number; theme: Theme; onZoom: (scale: number) => void; compact: boolean;
   focus?: CellAddress; pinned: FrozenAxes; onPin: (axis: keyof CellAddress, index: number) => void; findOpen: boolean;
-  matches: ReadonlyMap<string, WorksheetMatch[]>; active?: WorksheetMatch;
+  matches: ReadonlyMap<string, WorksheetMatch[]>; active?: WorksheetMatch; dragMode: boolean; tabActive: boolean;
 }) {
   const { t } = useTranslation(messages);
   const notify = useReaderNotice();
@@ -88,6 +88,7 @@ function WorksheetGrid({ sheet, scale, theme, onZoom, focus, pinned, onPin, matc
   const gridViewport = useRef<View>(null);
   const horizontal = useRef<ScrollViewInstance>(null);
   const vertical = useRef<ScrollViewInstance>(null);
+  const webZoom = useRef<Position>(undefined);
   const [picked, setPicked] = useState<Worksheet["cells"][number]>();
   const [menu, setMenu] = useState<CellMenu>();
   const closeMenu = useCallback(() => setMenu(undefined), []);
@@ -146,6 +147,22 @@ function WorksheetGrid({ sheet, scale, theme, onZoom, focus, pinned, onPin, matc
     const anchor = { x: viewport.width / 2, y: viewport.height / 2 };
     update(constrainInViewport(zoomAround(viewportPosition(saved ?? current.current), scale, anchor)));
   }, [web, viewport, content, scale, stopInertia, frozenRowSize, frozenColumnSize, findOpen]);
+  useLayoutEffect(() => {
+    const pending = webZoom.current;
+    webZoom.current = undefined;
+    if (!pending || pending.scale !== scale) return;
+    horizontal.current?.scrollTo({ x: pending.x, animated: false });
+    vertical.current?.scrollTo({ y: pending.y, animated: false });
+  }, [scale]);
+  function zoomWeb(factor: number | undefined, anchor: Point, scroll: Point) {
+    const previous = webZoom.current ?? { ...scroll, scale };
+    const next = factor === undefined ? 1 : boundZoom(previous.scale * factor);
+    if (next === previous.scale) return;
+    webZoom.current = zoomGridScroll(previous, next, anchor, viewport,
+      { width: width / scale, height: height / scale },
+      { width: frozenColumnSize / scale, height: frozenRowSize / scale });
+    onZoom(next);
+  }
   const focusGeometry = useRef({ columns, rows, frozenWidth, frozenHeight, frozenRow, frozenColumn, scrollLeft, scrollTop });
   focusGeometry.current = { columns, rows, frozenWidth, frozenHeight, frozenRow, frozenColumn, scrollLeft, scrollTop };
   useLayoutEffect(() => {
@@ -179,11 +196,15 @@ function WorksheetGrid({ sheet, scale, theme, onZoom, focus, pinned, onPin, matc
     closeMenu();
     return () => { clearTimeout(press.current?.timer); press.current = undefined; };
   }, [sheet, closeMenu]);
-  const openCellMenuRef = useRef(openCellMenu);
-  openCellMenuRef.current = openCellMenu;
+  const gridActions = useRef({ open: openCellMenu, dragMode, zoom: zoomWeb });
+  gridActions.current = { open: openCellMenu, dragMode, zoom: zoomWeb };
   useLayoutEffect(() => {
-    if (web) return bindWorksheetGrid(gridViewport.current, (point) => openCellMenuRef.current(point));
-  }, [web]);
+    if (web && tabActive) return bindWorksheetGrid(gridViewport.current, {
+      open: (point) => gridActions.current.open(point),
+      dragMode: () => gridActions.current.dragMode,
+      zoom: (...args) => gridActions.current.zoom(...args),
+    });
+  }, [tabActive, web]);
   function addressAt({ x, y }: Point): CellAddress | undefined {
     if (x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) return;
     const column = frozenColumn !== undefined && x < frozenWidth ? frozenColumn
@@ -229,7 +250,7 @@ function WorksheetGrid({ sheet, scale, theme, onZoom, focus, pinned, onPin, matc
       const timer = setTimeout(() => {
         if (!press.current) return;
         press.current.held = true;
-        measureContact(point, (target) => openCellMenuRef.current(target));
+        measureContact(point, (target) => gridActions.current.open(target));
       }, 500);
       press.current = { contact: point, timer, held: false };
     }
@@ -298,9 +319,14 @@ function WorksheetGrid({ sheet, scale, theme, onZoom, focus, pinned, onPin, matc
       </View>
       <View
         ref={gridViewport}
+        testID="omni-worksheet-viewport"
         collapsable={web}
+        tabIndex={web && tabActive ? 0 : undefined}
         {...nativeGestures}
-        style={{ flex: 1, minHeight: 0, marginLeft: gutter, overflow: "hidden" }}
+        style={[
+          { flex: 1, minHeight: 0, marginLeft: gutter, overflow: "hidden" },
+          web && dragMode && ({ cursor: "grab" } as unknown as ViewStyle),
+        ]}
         onLayout={({ nativeEvent }) => {
           const { width, height } = nativeEvent.layout;
           setViewport((previous) => previous.width === width && previous.height === height ? previous : { width, height });
@@ -447,7 +473,8 @@ function renderCells(
         ...(highlighted ? { borderWidth: 2, borderColor: theme.colors.accent } : {}),
       }}>
         {cell?.[2] ? (
-          <Text selectable ref={Platform.OS === "web" ? (node) => setWebTitle(node, cell[2]) : undefined}
+          <Text selectable {...(Platform.OS === "web" ? { dataSet: { worksheetCellText: "" } } : {})}
+            ref={Platform.OS === "web" ? (node) => setWebTitle(node, cell[2]) : undefined}
             style={[{
               color: style?.color ?? (style?.fill ? "#181818" : theme.colors.foreground),
               textAlign: style?.align ?? (cell[4] ? "right" : "left"),
@@ -508,6 +535,7 @@ export function WorksheetPanel(props: PluginFilePanelProps) {
   const tabActive = (props.tab as typeof props.tab & { active?: boolean }).active !== false;
   const [selected, setSelected] = useState(0);
   const [scale, setScale] = useState(1);
+  const [dragMode, setDragMode] = useState(false);
   const { findOpen, showFind, hideFind } = useReaderFindVisibility();
   const [addressOnly, setAddressOnly] = useState(false);
   const [pinnedSheets, setPinnedSheets] = useState<Partial<Record<number, FrozenAxes>>>({});
@@ -560,6 +588,8 @@ export function WorksheetPanel(props: PluginFilePanelProps) {
     <View ref={panel} tabIndex={web ? 0 : undefined} style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
       <Toolbar theme={theme} filePanel={props} nativePrimary={!web && zoomControls}>
         {web && zoomControls}
+        {web && <Control title={t("dragWorksheet")} icon="Hand" selected={dragMode} disabled={!sheet}
+          theme={theme} compact={compact} onPress={() => setDragMode((enabled) => !enabled)} />}
         <Control title={t("find")} icon="Search" selected={findOpen} disabled={!sheet}
           theme={theme} compact={compact} onPress={findOpen ? hideFind : openFind} />
         <ExternalFileAction {...props} />
@@ -567,7 +597,7 @@ export function WorksheetPanel(props: PluginFilePanelProps) {
       {sheet?.truncated && <Text style={{ padding: 8, color: theme.colors.foregroundMuted }}>{t("worksheetTruncated")}</Text>}
       <View style={{ flex: 1, minHeight: 0 }}>
         {sheet?.rows.length && sheet.columns.length ? <WorksheetGrid key={selected}
-          {...{ sheet, scale, theme, pinned, onPin, matches, compact, findOpen }} focus={searchFocus}
+          {...{ sheet, scale, theme, pinned, onPin, matches, compact, findOpen, dragMode, tabActive }} focus={searchFocus}
           active={find.active?.length === 4 ? find.active : undefined} onZoom={setScale} />
           : result.isFetching ? <Loading />
           : result.isError ? <ReadError theme={theme} compact={compact} label={t("textError")} error={result.error}

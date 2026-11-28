@@ -241,12 +241,12 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
     update((position, dimensions) => constrain({ ...position, x: position.x + x, y: position.y + y }, dimensions)),
     (contacts) => selection.track(contacts, "touch"));
 
-  const changeZoom = (resolve: (scale: number) => number) => {
+  const changeZoom = (resolve: (scale: number) => number,
+    anchor = { x: viewport.width / 2, y: Math.min(viewport.height / 2, 120) }) => {
     stopInertia();
-    update((current, dimensions) => zoomAt(current, boundZoom(resolve(current.scale)),
-      { x: viewport.width / 2, y: Math.min(viewport.height / 2, 120) }, dimensions));
+    update((current, dimensions) => zoomAt(current, boundZoom(resolve(current.scale)), anchor, dimensions));
   };
-  const stepZoom = (factor: number) => changeZoom((scale) => scale * factor);
+  const stepZoom = (factor: number, anchor?: Point) => changeZoom((scale) => scale * factor, anchor);
   const goTo = (target: number) => {
     stopInertia();
     update((current, dimensions) => jumpToPage(current, clamp(target, 1, dimensions.pageCount), dimensions));
@@ -345,7 +345,7 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
       selectedText: () => operations.current?.selectedText?.() ?? "",
       onCopied: () => operations.current?.onCopied?.(),
       scroll: (delta) => operations.current?.scroll(delta),
-      zoom: (factor) => operations.current?.zoom(factor),
+      zoom: (factor, anchor) => operations.current?.zoom(factor, anchor),
       fit: () => operations.current?.fit(),
     });
   }, [web, enabled]);

@@ -11,7 +11,7 @@ import { inlineMathMarker, readingBlocks, type InlineMath } from "../shared/read
 import { shareAndroidFile } from "../client/android-file-share";
 import { createPageRenderQueue } from "../client/page-render-queue";
 import { constrain, fitPagePosition, fitPages, jumpToPage, pageAt, pageBounds, visiblePages, zoomAt } from "../client/pdf-geometry";
-import { constrainGrid, panAndPinch, zoomAround, type Contact, type Position } from "../client/viewport-geometry";
+import { constrainGrid, panAndPinch, zoomAround, zoomGridScroll, type Contact, type Position } from "../client/viewport-geometry";
 import { createEngine } from "../server/engine";
 import { openWithDefaultApp } from "../server/external-file";
 import { inspectPdf, inspectPdfPages, rasterizePdf, rasterizePdfPage } from "../server/pdf-engine";
@@ -307,6 +307,21 @@ test("keeps the Excel gesture midpoint over the same cell and pans both axes aft
   assert.deepEqual(reset, { x: -95, y: -70, scale: 1 });
   assert.deepEqual(constrainGrid({ x: -999, y: -999, scale: 0.25 }, viewport, content),
     { x: 0, y: -500, scale: 0.25 });
+});
+
+test("keeps a scrolled Excel cell under the wheel pointer with frozen tracks and clamps both scroll axes", () => {
+  const viewport = { width: 600, height: 450 };
+  const content = { width: 2_000, height: 3_000 };
+  const frozen = { width: 120, height: 30 };
+  const before = { x: 400, y: 500, scale: 1 };
+  const anchor = { x: 320, y: 180 };
+  const zoomed = zoomGridScroll(before, 2, anchor, viewport, content, frozen);
+  assert.deepEqual(zoomed, { x: 1_080, y: 1_180, scale: 2 });
+  assert.deepEqual(zoomGridScroll(zoomed, 1, anchor, viewport, content, frozen), before);
+  assert.deepEqual(zoomGridScroll(before, 2, { x: 30, y: 10 }, viewport, content, frozen),
+    { x: 800, y: 1_000, scale: 2 });
+  assert.deepEqual(zoomGridScroll({ x: 1_520, y: 2_580, scale: 1 }, 0.25, anchor, viewport, content, frozen),
+    { x: 0, y: 307.5, scale: 0.25 });
 });
 
 test("reads Markdown larger than 1 MiB in sections without splitting formulas or changing source links", async () => {

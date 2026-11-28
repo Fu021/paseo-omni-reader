@@ -208,33 +208,10 @@ const TableBlock = memo(function TableBlock({ block: { rows, alignment }, theme,
   );
 });
 
-function useCopyFormula() {
-  const { t } = useTranslation(messages);
-  const toast = useToast();
-  const notify = useReaderNotice();
-  return useCallback(async (tex: string, showToast = true) => {
-    try {
-      await copyText(tex);
-      if (showToast) {
-        if (notify) notify(t("copied"));
-        else toast.show(t("copied"), { variant: "success" });
-      }
-      return true;
-    } catch {
-      if (showToast) {
-        if (notify) notify(t("formulaCopyError"), true);
-        else toast.error(t("formulaCopyError"));
-      }
-      return false;
-    }
-  }, [t, toast, notify]);
-}
-
-function DisplayFormula({ block, theme, scale, onCopy }: {
-  block: Extract<ReadingBlock, { kind: "formula" }>; theme: Theme; scale: number; onCopy?: (math: InlineMath) => void;
+function DisplayFormula({ block, theme, scale, onPreview }: {
+  block: Extract<ReadingBlock, { kind: "formula" }>; theme: Theme; scale: number; onPreview: (math: InlineMath) => void;
 }) {
   const { t } = useTranslation(messages);
-  const copy = useCopyFormula();
   const math = block.image && { tex: block.tex, image: block.image };
   return (
     <View style={{ minWidth: 0 }}>
@@ -247,8 +224,8 @@ function DisplayFormula({ block, theme, scale, onCopy }: {
           <Pressable
             testID="omni-display-formula"
             accessibilityRole="button" accessibilityLabel={block.tex}
-            accessibilityHint={t(onCopy ? "formulaCopyHint" : "copyFormula")}
-            onPress={onCopy ? () => onCopy(math) : () => { void copy(block.tex); }}
+            accessibilityHint={t("formulaCopyHint")}
+            onPress={() => onPreview(math)}
             style={Platform.OS === "web" ? { cursor: "pointer" } : undefined}
           >
             <Image
@@ -355,23 +332,26 @@ export const RichMarkdown = memo(function RichMarkdown({ text: authored, theme, 
     * effectiveBodySize / bodyReferenceSize;
   const [selectedFormula, setSelectedFormula] = useState<FormulaSelection | null>(null);
   const root = useRef<View>(null);
-  const copy = useCopyFormula();
-  const showAndCopyFormula = useCallback((formula: InlineMath) => {
+  const showAndCopyFormula = useCallback(async (formula: InlineMath) => {
     const selection: FormulaSelection = { formula, status: "copying" };
     setSelectedFormula(selection);
-    void copy(formula.tex, false).then((copied) => {
-      setSelectedFormula((current) =>
-        current === selection ? { formula, status: copied ? "copied" : "failed" } : current);
-    });
-  }, [copy]);
-  const webActions = useRef({ copy, colors: theme.colors });
-  webActions.current = { copy, colors: theme.colors };
+    let status: FormulaSelection["status"] = "copied";
+    try {
+      await copyText(formula.tex);
+    } catch {
+      status = "failed";
+    }
+    setSelectedFormula((current) => current === selection ? { formula, status } : current);
+  }, []);
+  const webPresentation = useRef({ colors: theme.colors, previewOpen: false });
+  webPresentation.current = { colors: theme.colors, previewOpen: selectedFormula !== null };
   useEffect(() => {
     if (platform === "web") return bindWebFormulas(root.current, {
-      copy: (tex) => { void webActions.current.copy(tex); },
-      colors: () => webActions.current.colors,
+      preview: showAndCopyFormula,
+      colors: () => webPresentation.current.colors,
+      isPreviewOpen: () => webPresentation.current.previewOpen,
     });
-  }, [platform]);
+  }, [platform, showAndCopyFormula]);
   const color = asRgb(theme.colors.foreground);
   const request = useMemo(() => batchFormulas((formulas) => rpc({ color, platform, formulas })), [rpc, color, platform]);
   const spans = useMemo(() => findFormulas(text), [text]);
@@ -437,7 +417,7 @@ export const RichMarkdown = memo(function RichMarkdown({ text: authored, theme, 
             renderCell={native ? renderNative : undefined} />
         );
         return <DisplayFormula key={`${index}:${block.tex}`} block={block} theme={theme} scale={displayScale}
-          onCopy={native ? showAndCopyFormula : undefined} />;
+          onPreview={showAndCopyFormula} />;
       })}
       {retries.length > 0 && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4 }}>

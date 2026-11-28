@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { formulasPerRequest } from "../../shared/contracts";
+import { findFormulas } from "../../shared/markdown-math";
 import { createEngine } from "../../server/engine";
 import { loadMarkdownInfo } from "../../server/markdown-index";
 import { createOfficePreview } from "../../server/office-preview";
@@ -16,15 +18,68 @@ test("uses the bundled engines for multilingual previews", { timeout: 150_000 },
   try {
     await context.test("Chinese Markdown and LaTeX", async () => {
       const path = "notes.md";
-      const tex = String.raw`G\text{ 负定}\quad\Longleftrightarrow\quad-G\text{ 正定}.`;
-      await writeFile(join(folder, path), "# 观测 *Report*\n\n\\[\n" + tex + "\n\\]\n");
+      const formulas = [
+        { tex: String.raw`G\text{ 负定}\quad\Longleftrightarrow\quad-G\text{ 正定}.`, display: true },
+        { tex: String.raw`T_{\text{实测}}^{\text{校准}}=23.4`, display: false },
+        { tex: String.raw`x_{i_{\text{甲}}}^{y^{\text{乙}}}`, display: false },
+        { tex: String.raw`\sqrt[\text{阶}]{\frac{\text{潮位}}{n_{\text{样本}}}}`, display: false },
+        { tex: String.raw`\sum_{i\in\text{站点}}^{\text{上限}}\frac{a_i}{\text{样本数}}\quad A\xrightarrow[\text{回测}]{\text{修正}}B`, display: true },
+        { tex: String.raw`\underbrace{x_1+x_2}_{\text{观测总量}}\quad\overbrace{\frac{a}{b}}^{\text{归一化}}`, display: true },
+        { tex: String.raw`f(x)=\begin{cases}x^2 & \text{当 } x\ge 0,\\-x & \text{否则。}\end{cases}`, display: true },
+        { tex: String.raw`A=\begin{bmatrix}\text{甲}&\text{乙}\\\text{丙}&\text{丁}\end{bmatrix}`, display: true },
+        { tex: String.raw`T_{实测}^{校准}`, display: false },
+      ];
+      const markdown = "# 观测 *Report*\n\n" + formulas.map(({ tex, display }) =>
+        display ? `\\[\n${tex}\n\\]` : `中文 \\(${tex}\\) English.`).join("\n\n");
+      await writeFile(join(folder, path), markdown);
       assert.equal((await loadMarkdownInfo(folder, path)).headings[0]?.title, "观测 Report");
-      for (const platform of ["web", "ios", "android"] as const) {
-        const { images: [image] } = await engine.dispatch({
-          kind: "math", platform, color: "#333333", formulas: [{ tex, display: true }],
-        });
-        assert.ok(image?.width && image.baseline);
-        assert.match(image.uris[0], platform === "web" ? /^data:image\/svg\+xml;base64,/ : /^data:image\/png;base64,/);
+      assert.deepEqual(findFormulas(markdown).map(({ tex, display }) => ({ tex, display })), formulas);
+
+      const characters = [...new Set(formulas.flatMap(({ tex }) => tex.match(/\p{Script=Han}/gu) ?? []))];
+      const render = (platform: "web" | "ios" | "android", entries: typeof formulas) =>
+        engine.dispatch({ kind: "math", platform, color: "#333333", formulas: entries });
+      const paths = (uri: string) => {
+        assert.match(uri, /^data:image\/svg\+xml;base64,/);
+        const svg = Buffer.from(uri.split(",")[1], "base64").toString("utf8");
+        return [...svg.matchAll(/<path[^>]+ d="([^"]+)"/g)].map((match) => match[1]);
+      };
+      const glyphs = new Map<string, string>();
+      for (let offset = 0; offset < characters.length; offset += formulasPerRequest) {
+        const batch = characters.slice(offset, offset + formulasPerRequest);
+        const { images: references } = await render("web", batch.map((character) => ({
+          tex: `\\text{${character}}`, display: false,
+        })));
+        for (const [index, image] of references.entries()) {
+          const character = batch[index];
+          assert.ok(image, character);
+          const [outline] = paths(image.uris[0]);
+          assert.ok(outline, character);
+          glyphs.set(character, outline);
+        }
+      }
+      assert.equal(new Set(glyphs.values()).size, characters.length, "Chinese glyphs must have distinct outlines");
+      const { images: web } = await render("web", formulas);
+      for (const [index, { tex }] of formulas.entries()) {
+        const image = web[index];
+        assert.ok(image?.width && image.baseline && image.baseline < image.height, tex);
+        const outlines = paths(image.uris[0]);
+        for (const character of new Set(tex.match(/\p{Script=Han}/gu))) {
+          const outline = glyphs.get(character);
+          assert.ok(outline && outlines.includes(outline), `Missing ${character} in ${tex}`);
+        }
+      }
+      for (const platform of ["ios", "android"] as const) {
+        const { images } = await render(platform, formulas);
+        for (const [index, image] of images.entries()) {
+          const reference = web[index];
+          assert.ok(image && reference, `${platform}: ${formulas[index].tex}`);
+          assert.deepEqual([image.width, image.height, image.baseline],
+            [reference.width, reference.height, reference.baseline]);
+          assert.match(image.uris[0], /^data:image\/png;base64,/);
+          const png = Buffer.from(image.uris[0].split(",")[1], "base64");
+          assert.equal(png.readUInt32BE(16), image.width * 3);
+          assert.equal(png.readUInt32BE(20), image.height * 3);
+        }
       }
     });
     await context.test("multilingual PDF", async () => {
