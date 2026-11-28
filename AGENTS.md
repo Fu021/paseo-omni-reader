@@ -16,5 +16,5 @@
 
 - 经用户确认后推送 `main`。发布前同步 `package.json` 和 `package-lock.json` 的版本，运行 `npm run check:package -- --paseo` 并确认 GitHub CI 通过。
 - 用 `npm run pack:release` 生成发布包。npm 需要双重验证时走 `npm stage publish`，发起审批并把验证链接交给用户。公开后从 npm 安装验证。
-- npm 新版本验证通过后，向 [Paseo 市场](https://github.com/getpaseo/plugins)提交更新 PR。核对市场固定版本，若已有同版本的 `bump` PR 则沿用。用市场的锁定工具生成 `plugins/fu021/omni-reader.json`，运行 `npm test` 和 `npm run validate -- --online --changed`，并把 npm 版本页和审核 PR 链接发给用户。
+- npm 新版本验证通过后，等待 [Paseo 市场](https://github.com/getpaseo/plugins)自动发起版本更新 PR。交付时提供 npm 版本页链接，市场审核 PR 出现后附上链接。
 - 市场保留 `OVERVIEW.md` 和 `OVERVIEW.zh-CN.md` 两份介绍，使用三张英文展示图。插件界面支持简体中文，其他语言回退到英文。
