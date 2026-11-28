@@ -3,17 +3,19 @@ import { useQueries } from "@tanstack/react-query";
 import {
   useRpc, useSettings, useTranslation, type PluginClientContext, type PluginTimelineItemProps,
 } from "@getpaseo/plugin/client";
-import { copyText, Icon, Markdown, StreamedText, useToast } from "@getpaseo/plugin/client/ui";
+import { copyText, Icon, Markdown, ScrollView, StreamedText, useToast } from "@getpaseo/plugin/client/ui";
 import { Image, Modal, Platform, Pressable, SafeAreaView, ScrollView as NativeScrollView, Text, View, useWindowDimensions, type LayoutChangeEvent, type TextStyle } from "react-native";
 import { formulaImageUri, formulasPerRequest, markdownKind, messageSchema, renderFormulas, type Formula, type FormulaImage } from "../shared/contracts";
 import { findFormulas, formulaKey, formulaTitlePattern, markdownParser } from "../shared/markdown-math";
-import { inlineMathMarker, inlineMathReferenceFontSize, readingBlocks, type InlineMath, type ReadingBlock } from "../shared/reading-blocks";
+import { inlineMathMarker, inlineMathReferenceFontSize, readingBlocks, type ColumnAlignment, type InlineMath, type ReadingBlock } from "../shared/reading-blocks";
+import { inlineReferenceLinks } from "../shared/markdown-references";
 import { readerSettings } from "../shared/reader-settings";
 import { Control, type Theme } from "./controls";
-import { assistantReplacement, assistantReplyKey, shouldReplaceAssistant, type AssistantReply } from "./assistant-turn";
+import { assistantReplacement, assistantReplyKey, shouldReplaceAssistant } from "./assistant-turn";
 import { messages } from "./messages";
 import { NativeMarkdown } from "./native-markdown";
-import { ReaderScrollView as ScrollView } from "./reader-scroll";
+import { useReaderNotice } from "./reader-notice";
+import { Syntax, codeFontStyle } from "./syntax";
 import { bindWebFormulas, webTableStyles } from "./web";
 
 const maxDistinctFormulas = 144;
@@ -24,30 +26,16 @@ const displayMathWebReferenceFontSize = 15;
 export function registerAssistantReading(client: PluginClientContext): () => void {
   const restored = new Set<string>();
 
-  function registerTransformer() {
-    return client.addTimelineTransformer({
-      id: "assistant-math", query: { itemType: "assistant_message" },
-      transform(input) {
-        if (!shouldReplaceAssistant(input.item.text)) return;
-        return assistantReplacement(input, restored.has(assistantReplyKey(input.item)));
-      },
-    });
-  }
-
-  function setOriginalReply(reply: AssistantReply, original: boolean) {
-    const key = assistantReplyKey(reply);
-    if (restored.has(key) === original) return;
-    if (original) restored.add(key);
-    else restored.delete(key);
-    removeTransformer();
-    removeTransformer = registerTransformer();
-  }
-
   const removeRenderer = client.addTimelineRenderer({
     kind: markdownKind, version: 1, schema: messageSchema,
-    Component: (props) => <AssistantReader {...props} setOriginalReply={setOriginalReply} />,
+    Component: (props) => <AssistantReader {...props} restored={restored} />,
   });
-  let removeTransformer = registerTransformer();
+  const removeTransformer = client.addTimelineTransformer({
+    id: "assistant-math", query: { itemType: "assistant_message" },
+    transform(input) {
+      if (shouldReplaceAssistant(input.item.text)) return assistantReplacement(input);
+    },
+  });
   return () => {
     removeTransformer();
     removeRenderer();
@@ -97,12 +85,15 @@ const CodeBlock = memo(function CodeBlock({ block, theme, compact }: {
 }) {
   const { t } = useTranslation(messages);
   const toast = useToast();
+  const notify = useReaderNotice();
   const copy = async () => {
     try {
       await copyText(block.text);
-      toast.show(t("copied"), { variant: "success" });
+      if (notify) notify(t("copied"));
+      else toast.show(t("copied"), { variant: "success" });
     } catch {
-      toast.error(t("copyError"));
+      if (notify) notify(t("copyError"), true);
+      else toast.error(t("copyError"));
     }
   };
   return (
@@ -120,9 +111,9 @@ const CodeBlock = memo(function CodeBlock({ block, theme, compact }: {
         contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 12 }}
       >
         <Text selectable style={[
-          { color: theme.colors.foreground, fontFamily: "monospace", fontSize: 13, lineHeight: 20 },
+          codeFontStyle, { color: theme.colors.foreground },
           Platform.OS === "web" && ({ whiteSpace: "pre" } as TextStyle),
-        ]}>{block.text}</Text>
+        ]}><Syntax source={block.text} language={block.language} theme={theme} /></Text>
       </ScrollView>
     </View>
   );
@@ -167,8 +158,9 @@ function nativeCellWidth(cell: string, formulas: InlineMath[], textScale: number
   return Math.ceil(Math.max(widestFormula, Math.min(tableCellLimit, preferredWidth))) + tableCellPadding * 2 + 2;
 }
 
-const TableBlock = memo(function TableBlock({ rows, theme, formulas, textScale, renderCell }: {
-  rows: string[][]; theme: Theme; formulas: InlineMath[]; textScale: number; renderCell?: (cell: string) => React.ReactNode;
+const TableBlock = memo(function TableBlock({ block: { rows, alignment }, theme, formulas, textScale, renderCell }: {
+  block: Extract<ReadingBlock, { kind: "table" }>; theme: Theme; formulas: InlineMath[]; textScale: number;
+  renderCell?: (cell: string, align?: ColumnAlignment) => React.ReactNode;
 }) {
   const web = Platform.OS === "web";
   const columns = useMemo(() => rows[0]?.map((_, column) => web
@@ -198,9 +190,9 @@ const TableBlock = memo(function TableBlock({ rows, theme, formulas, textScale, 
                       paddingHorizontal: tableCellPadding, paddingVertical: 8,
                       borderTopWidth: index ? 1 : 0, borderLeftWidth: column ? 1 : 0, borderColor: theme.colors.border,
                     },
-                    web && webTableStyles.cell,
+                    web && [webTableStyles.cell, { textAlign: alignment[column] } as TextStyle],
                   ]}>
-                    {renderCell ? renderCell(cell) : (
+                    {renderCell ? renderCell(cell, alignment[column]) : (
                       <View style={{ maxWidth: columns[column] }}>
                         <Markdown>{formula ? `\u2060${cell}` : cell}</Markdown>
                       </View>
@@ -219,16 +211,23 @@ const TableBlock = memo(function TableBlock({ rows, theme, formulas, textScale, 
 function useCopyFormula() {
   const { t } = useTranslation(messages);
   const toast = useToast();
+  const notify = useReaderNotice();
   return useCallback(async (tex: string, showToast = true) => {
     try {
       await copyText(tex);
-      if (showToast) toast.show(t("copied"), { variant: "success" });
+      if (showToast) {
+        if (notify) notify(t("copied"));
+        else toast.show(t("copied"), { variant: "success" });
+      }
       return true;
     } catch {
-      if (showToast) toast.error(t("formulaCopyError"));
+      if (showToast) {
+        if (notify) notify(t("formulaCopyError"), true);
+        else toast.error(t("formulaCopyError"));
+      }
       return false;
     }
-  }, [t, toast]);
+  }, [t, toast, notify]);
 }
 
 function DisplayFormula({ block, theme, scale, onCopy }: {
@@ -327,9 +326,10 @@ function FormulaPreview({ selection, theme, copy, close }: {
   );
 }
 
-export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, hostId }: {
-  text: string; theme: Theme; compact: boolean; hostId: string;
+export const RichMarkdown = memo(function RichMarkdown({ text: authored, theme, compact, hostId, anchors }: {
+  text: string; theme: Theme; compact: boolean; hostId: string; anchors?: ReadonlyMap<string, () => void>;
 }) {
+  const text = useMemo(() => inlineReferenceLinks(authored), [authored]);
   const { t } = useTranslation(messages);
   const rpc = useRpc(renderFormulas);
   const settings = useSettings(readerSettings);
@@ -408,13 +408,13 @@ export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, h
     retryOnMount: false,
   })), [color, formulas, hostId, platform, request]);
   const { blocks, nativeMath, retries, retrying } = useQueries({ queries, combine });
-  const renderNative = useCallback((markdown: string) => (
-    <NativeMarkdown text={markdown} formulas={nativeMath} theme={theme} onCopy={showAndCopyFormula}
-      bodySize={bodySize} fontScale={fontScale} />
-  ), [bodySize, fontScale, nativeMath, showAndCopyFormula, theme]);
+  const renderNative = useCallback((markdown: string, align?: ColumnAlignment) => (
+    <NativeMarkdown text={markdown} formulas={nativeMath} theme={theme} onCopy={showAndCopyFormula} anchors={anchors}
+      bodySize={bodySize} fontScale={fontScale} align={align} />
+  ), [anchors, bodySize, fontScale, nativeMath, showAndCopyFormula, theme]);
   return (
     <View ref={root} testID="omni-markdown" style={{ minWidth: 0, gap: compact ? 12 : 16 }}>
-      {(nativeMath.length > 0 || blocks.some((block) => block.kind === "table" || block.kind === "formula")) && (
+      {(nativeMath.length > 0 || anchors?.size || blocks.some((block) => block.kind === "table" || block.kind === "formula")) ? (
         <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
           style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0 }}>
           <View style={{ width: 256, alignItems: "flex-start" }}>
@@ -425,14 +425,14 @@ export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, h
               onLayout={measureReference} />
           </View>
         </View>
-      )}
+      ) : null}
       {blocks.map((block, index) => {
         if (block.kind === "markdown") return native
           ? <View key={index} style={{ gap: 8 }}>{renderNative(block.text)}</View>
           : <Markdown key={index}>{block.text}</Markdown>;
         if (block.kind === "code") return <CodeBlock key={index} block={block} theme={theme} compact={compact} />;
         if (block.kind === "table") return (
-          <TableBlock key={index} rows={block.rows} theme={theme}
+          <TableBlock key={index} block={block} theme={theme}
             formulas={nativeMath} textScale={effectiveBodySize / inlineMathReferenceFontSize}
             renderCell={native ? renderNative : undefined} />
         );
@@ -456,28 +456,34 @@ export const RichMarkdown = memo(function RichMarkdown({ text, theme, compact, h
   );
 });
 
-function AssistantReader({ item, theme, layout, host, setOriginalReply }:
-  PluginTimelineItemProps<ReturnType<typeof messageSchema.parse>> & {
-    setOriginalReply: (reply: AssistantReply, original: boolean) => void;
-  }) {
-  const { text, phase, messageId, plain } = item.data;
+function AssistantReader({ item, theme, layout, host, agentId, restored }:
+  PluginTimelineItemProps<ReturnType<typeof messageSchema.parse>> & { restored: Set<string> }) {
+  const { text, phase, messageId } = item.data;
+  const replyKey = messageId || phase !== "streaming"
+    ? JSON.stringify([host.id, agentId, assistantReplyKey({ text, messageId })])
+    : null;
+  const [plainOverride, setPlainOverride] = useState<boolean>();
+  const plain = plainOverride ?? (replyKey !== null && restored.has(replyKey));
+  useEffect(() => {
+    if (replyKey === null || plainOverride === undefined) return;
+    if (plainOverride) restored.add(replyKey);
+    else restored.delete(replyKey);
+  }, [plainOverride, replyKey, restored]);
   const { t } = useTranslation(messages);
   const label = t(plain ? "resumeRendering" : "restoreReply");
   return (
     <>
       {plain ? <Markdown>{text}</Markdown>
         : <RichMarkdown text={text} theme={theme} compact={layout.compact} hostId={host.id} />}
-      {phase !== "streaming" && (
-        <Pressable testID="omni-reply-mode" accessibilityRole="button" accessibilityLabel={label}
-          hitSlop={4} onPress={() => setOriginalReply({ text, messageId }, !plain)} style={({ pressed }) => ({
-            alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 4,
-            marginTop: 8, height: 28, paddingHorizontal: 4, borderRadius: 6,
-            backgroundColor: pressed ? theme.colors.surface2 : "transparent",
-          })}>
-          <Icon name={plain ? "Sigma" : "CodeXml"} size={14} color={theme.colors.foregroundMuted} />
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{label}</Text>
-        </Pressable>
-      )}
+      <Pressable testID="omni-reply-mode" accessibilityRole="button" accessibilityLabel={label}
+        hitSlop={4} onPress={() => setPlainOverride(!plain)} style={({ pressed }) => ({
+          alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 4,
+          marginTop: 8, height: 28, paddingHorizontal: 4, borderRadius: 6,
+          backgroundColor: pressed ? theme.colors.surface2 : "transparent",
+        })}>
+        <Icon name={plain ? "Sigma" : "CodeXml"} size={14} color={theme.colors.foregroundMuted} />
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{label}</Text>
+      </Pressable>
     </>
   );
 }

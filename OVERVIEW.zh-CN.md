@@ -1,4 +1,4 @@
-# Paseo Omni Reader
+# Omni Reader
 
 Omni Reader 为工作区中的 Markdown、PDF、Word、Excel 和 PowerPoint 提供只读预览。文件可按 Paseo 的「打开位置」设置在主面板或侧边打开。插件也会在流式助手回复中渲染 LaTeX。点击**还原原始回复**可切回 Paseo 的 Markdown。
 
@@ -6,8 +6,12 @@ Omni Reader 为工作区中的 Markdown、PDF、Word、Excel 和 PowerPoint 提�
 
 行内分数按分子和分母所需的高度排版，独立公式居中。聊天中的两种公式均跟随 Paseo 的内容字号，插件设置可分别选择 50% 至 200% 的字号档位。浏览器中悬停可看 LaTeX 原文，点击可复制。手机上点按公式即可预览并复制 LaTeX，预览中也有**复制 LaTeX 原文**按钮。渲染失败时会保留源码并提供重试。
 
-Markdown 可显示与聊天相同的 LaTeX、切换源码，并随阅读加载大文件。PDF 和带排版的 Office 预览可连续上下滚动。100% 时整页按宽度或高度适配。使用工具栏缩放，也可点击预览后按 `+`、`-` 或 `0`。PDF 预览上限为 128 MiB。在 Paseo 主机安装 LibreOffice 后，最大 24 MiB 的 Office 文件可按 Word 页面、Excel 打印版式和 PowerPoint 幻灯片预览。Excel 还提供无需 LibreOffice 的可滚动只读工作表网格。
+各预览器在操作区上方显示文件大小。Markdown 还显示行数，并随阅读加载大文件。PDF 预览上限为 128 MiB。在 Paseo 主机上安装 LibreOffice 后，最大 24 MiB 的 `.docx`、`.xlsx` 和 `.pptx` 文件可按 Word 页面、Excel 打印版式和 PowerPoint 幻灯片预览。Excel 工作表网格无需 LibreOffice。
 
-在 iOS 和 Android 上，Omni Reader 以全屏显示文件内容，滑动手势留在阅读器内。PDF、带排版的 Office 页面和 Excel 工作表可双指缩放、单指平移。Paseo 0.17.6 中，点全屏右上角的 × 返回文件标题栏，再点 Paseo 的 × 关闭文件，或点全屏图标重新打开。
+- **Markdown。** 一边看排版后的 LaTeX，一边看带行号的源码。桌面与平板的宽面板默认左右分屏，窄面板可手动开启上下分屏。两侧跟随滚动，点击内容块旁的源码按钮可高亮对应行。全文查找包含尚未加载的部分，支持区分大小写、全词和正则。
+- **PDF 和 Office 页面。** 页面连续排列，可跳转到指定页或幻灯片，也可拖动滑杆或输入百分比来缩放。100% 时整页按宽度或高度适配。可直接选中并复制文字，悬浮查找栏保持页面原有缩放。PDF 的文字选取与查找需要文字层。PowerPoint 默认显示可收起的幻灯片缩略图侧栏。
+- **Excel 工作表。** 查看自动换行的文本和合并单元格，在工作表间切换，也可打开打印版式。查找 `A4` 可同时匹配地址与单元格文本，开启「仅查找单元格地址」则直接定位。右键或长按单元格，可分别冻结或解除冻结所在行、列。
+
+在 iOS 和 Android 上，文件直接在 Paseo 的文件面板内预览。PDF、带排版的 Office 页面和 Excel 工作表可双指缩放、单指平移。点击 Paseo 的 × 关闭预览。
 
 使用 Paseo 桌面客户端打开本机工作区时，「在外部打开」会使用系统默认应用打开原件。浏览器和桌面端的远程工作区下载副本。iOS 和 Android 通过系统分享交给其他 App。Android 系统分享不可用时，可从 Paseo 文件菜单下载。守护进程读取工作区文件并通过 Paseo 连接返回预览结果，插件无需外部渲染服务。

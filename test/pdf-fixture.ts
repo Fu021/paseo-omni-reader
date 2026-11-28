@@ -5,14 +5,15 @@ export function makeLargePdf() {
     "% Start of deliberate uncompressed padding",
     ...Array.from({ length: 1100 }, () => "%" + "x".repeat(1000)),
   ].join("\n");
-  const other = "0 0.8 0.4 rg 40 40 520 720 re f";
+  const other = "0 0.8 0.4 rg 40 40 520 720 re f\nBT /F1 16 Tf 50 730 Td (Tidal observatory marker) Tj ET";
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 5 0 R >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 6 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>",
     `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
     `<< /Length ${other.length} >>\nstream\n${other}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ];
   let source = "%PDF-1.4\n";
   const entries = ["0000000000 65535 f "];

@@ -4,9 +4,10 @@ import { formulaKey, inlineFormula, lineOffsets, markdownParser, type FormulaSpa
 export type ReadingBlock =
   | { kind: "markdown"; text: string }
   | { kind: "code"; text: string; language: string }
-  | { kind: "table"; rows: string[][] }
+  | { kind: "table"; rows: string[][]; alignment: (ColumnAlignment | undefined)[] }
   | { kind: "formula"; image?: FormulaImage; tex: string; source: string };
 
+export type ColumnAlignment = "left" | "center" | "right";
 export const inlineMathMarker = /\uE000omni(\d+)\uE001/g;
 export const inlineMathReferenceFontSize = 16;
 export interface InlineMath { image: FormulaImage; tex: string }
@@ -29,13 +30,19 @@ function layoutBlocks(text: string, blocks: ReadingBlock[]) {
     const end = offsets[token.map[1]];
     if (token.type === "table_open") {
       const rows: string[][] = [];
+      const alignment: (ColumnAlignment | undefined)[] = [];
       for (const child of tokens.slice(index + 1)) {
         if (child.type === "table_close") break;
         if (child.type === "tr_open") rows.push([]);
+        if (child.type === "th_open") {
+          const style = child.attrGet("style");
+          const position = typeof style === "string" ? style.slice("text-align:".length) : undefined;
+          alignment.push(position === "left" || position === "center" || position === "right" ? position : undefined);
+        }
         if (child.type === "inline") rows.at(-1)?.push(child.content);
       }
       appendText(blocks, text.slice(cursor, start));
-      blocks.push({ kind: "table", rows });
+      blocks.push({ kind: "table", rows, alignment });
       cursor = end;
     }
     if (token.type === "fence") {

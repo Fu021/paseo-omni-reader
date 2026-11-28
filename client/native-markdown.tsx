@@ -1,12 +1,11 @@
 import { Fragment, memo, useMemo, useState, type ReactNode } from "react";
 import { Image, Pressable, Text, View, type TextStyle } from "react-native";
 import { useTranslation } from "@getpaseo/plugin/client";
-import { Markdown } from "@getpaseo/plugin/client/ui";
+import { Markdown, ScrollView } from "@getpaseo/plugin/client/ui";
 import { lineOffsets, markdownParser } from "../shared/markdown-math";
-import { inlineMathMarker, inlineMathReferenceFontSize, type InlineMath } from "../shared/reading-blocks";
+import { inlineMathMarker, inlineMathReferenceFontSize, type ColumnAlignment, type InlineMath } from "../shared/reading-blocks";
 import type { Theme } from "./controls";
 import { messages } from "./messages";
-import { ReaderScrollView as ScrollView } from "./reader-scroll";
 
 const containsMath = new RegExp(inlineMathMarker.source);
 const words = typeof Intl.Segmenter === "function" ? new Intl.Segmenter("zh-CN", { granularity: "word" }) : undefined;
@@ -14,6 +13,23 @@ const opening = /^[([{“‘「『《（【]$/u;
 const closing = /^[,.!?;:%)\]}、。，！？；：）】」』》”’]+$/u;
 const headingScales = { h1: 1.6, h2: 1.4, h3: 1.2, h4: 1.1, h5: 1, h6: 1 };
 type Token = ReturnType<typeof markdownParser.parse>[number];
+type Anchors = ReadonlyMap<string, () => void>;
+
+function linkedLabel(tokens: Token[], formulas: InlineMath[]) {
+  const escape = (value: string) => value.replace(/[\\\[\]*_~`\n]/g, (mark) => mark === "\n" ? " " : `\\${mark}`);
+  return tokens.map((token) => {
+    if (token.type === "hardbreak" || token.type === "softbreak") return " ";
+    if (token.type === "code_inline") {
+      const fence = "`".repeat(Math.max(0, ...Array.from(token.content.matchAll(/`+/g), ([part]) => part.length)) + 1);
+      return `${fence} ${token.content} ${fence}`;
+    }
+    if (token.type === "image" && token.attrGet("src")) {
+      return `![${escape(token.content)}](<${String(token.attrGet("src")).replace(/[<>]/g, encodeURIComponent)}>)`;
+    }
+    if (["strong", "em", "s"].includes(token.tag)) return token.markup;
+    return escape(token.content.replace(inlineMathMarker, (_, id) => formulas[Number(id)]?.tex ?? ""));
+  }).join("");
+}
 
 function breakableText(text: string) {
   const parts: string[] = [];
@@ -62,7 +78,7 @@ const InlineFormula = memo(function InlineFormula({ math, scrollWidth, textScale
 });
 
 function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWidth: number,
-  onCopy: (math: InlineMath) => void, fontSize: number, fontScale: number): ReactNode[] {
+  onCopy: (math: InlineMath) => void, fontSize: number, fontScale: number, anchors?: Anchors): ReactNode[] {
   const runs: ReactNode[] = [];
   const marks: string[] = [];
   const textScale = fontScale * fontSize / inlineMathReferenceFontSize;
@@ -85,14 +101,20 @@ function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWi
       const end = tokens.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.type === "link_close");
       const href = token.attrGet("href");
       if (end > index && typeof href === "string" && href) {
-        const label = tokens.slice(index + 1, end).map(({ content }) => content).join("")
-          .replace(inlineMathMarker, (_, id) => formulas[Number(id)]?.tex ?? "")
-          .replace(/[\\[\]\n]/g, (value) => value === "\n" ? " " : `\\${value}`);
-        runs.push(
+        const children = tokens.slice(index + 1, end);
+        const action = anchors?.get(href);
+        const label = linkedLabel(children, formulas);
+        const title = String(token.attrGet("title") ?? "").replace(/[\\"]/g, "\\$&");
+        runs.push(action ? (
+          <Text key={runs.length} accessibilityRole="link" onPress={action}
+            style={{ flexShrink: 1, color: theme.colors.accent, fontSize, textDecorationLine: "underline" }}>
+            {children.map(({ content }) => content).join("")}
+          </Text>
+        ) : (
           <View key={runs.length} style={{ flexShrink: 1, maxWidth: "100%" }}>
-            <Markdown>{`[${label}](<${href.replaceAll("<", "%3C").replaceAll(">", "%3E")}>)`}</Markdown>
-          </View>,
-        );
+            <Markdown>{`[${label}](<${href.replaceAll("<", "%3C").replaceAll(">", "%3E")}>${title ? ` "${title}"` : ""})`}</Markdown>
+          </View>
+        ));
         index = end;
         continue;
       }
@@ -127,9 +149,9 @@ function inlineRuns(tokens: Token[], formulas: InlineMath[], theme: Theme, maxWi
   return runs;
 }
 
-function NativeBlock({ source, tokens, theme, formulas, onCopy, bodySize, fontScale }: {
+function NativeBlock({ source, tokens, theme, formulas, onCopy, bodySize, fontScale, align, anchors }: {
   source: string; tokens: Token[]; theme: Theme; formulas: InlineMath[]; onCopy: (math: InlineMath) => void;
-  bodySize: number; fontScale: number;
+  bodySize: number; fontScale: number; align?: ColumnAlignment; anchors?: Anchors;
 }) {
   const [width, setWidth] = useState(0);
   const lists: (number | null)[] = [];
@@ -153,6 +175,7 @@ function NativeBlock({ source, tokens, theme, formulas, onCopy, bodySize, fontSc
           const offsets = lineOffsets(source);
           return token.map && <Markdown key={index}>{source.slice(offsets[token.map[0]], offsets[token.map[1]])}</Markdown>;
         }
+        if (token.type === "hr") return <Markdown key={index}>{"---"}</Markdown>;
         if (token.type !== "inline" || !token.children) return null;
         const heading = tokens[index - 1]?.tag as keyof typeof headingScales | undefined;
         const fontSize = Math.round(bodySize * ((heading && headingScales[heading]) || 1));
@@ -162,9 +185,12 @@ function NativeBlock({ source, tokens, theme, formulas, onCopy, bodySize, fontSc
         return (
           <View key={index} style={{ marginLeft: indent, flexDirection: "row", gap: prefix ? 6 : 0 }}>
             {!!prefix && <Text style={{ color: theme.colors.foregroundMuted, fontSize, lineHeight: Math.round(fontSize * 1.5) }}>{prefix}</Text>}
-            <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", rowGap: 1 }}>
+            <View style={{
+              flex: 1, flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", rowGap: 1,
+              justifyContent: align === "right" ? "flex-end" : align === "center" ? "center" : "flex-start",
+            }}>
               {inlineRuns(token.children, formulas, theme,
-                width ? Math.max(1, width - indent - (prefix ? 26 : 0)) : Infinity, onCopy, fontSize, fontScale)}
+                width ? Math.max(1, width - indent - (prefix ? 26 : 0)) : Infinity, onCopy, fontSize, fontScale, anchors)}
             </View>
           </View>
         );
@@ -173,12 +199,12 @@ function NativeBlock({ source, tokens, theme, formulas, onCopy, bodySize, fontSc
   );
 }
 
-export const NativeMarkdown = memo(function NativeMarkdown({ text, formulas, theme, onCopy, bodySize, fontScale }: {
+export const NativeMarkdown = memo(function NativeMarkdown({ text, formulas, theme, onCopy, bodySize, fontScale, align, anchors }: {
   text: string; formulas: InlineMath[]; theme: Theme; onCopy: (math: InlineMath) => void;
-  bodySize: number; fontScale: number;
+  bodySize: number; fontScale: number; align?: ColumnAlignment; anchors?: Anchors;
 }) {
   const sections = useMemo(() => {
-    if (!containsMath.test(text)) return [{ text }];
+    if (!align && !containsMath.test(text) && !(anchors?.size && text.includes("#"))) return [{ text }];
     const offsets = lineOffsets(text);
     const tokens = markdownParser.parse(text, {});
     const roots = tokens.flatMap((token, index) => token.level === 0 && token.map ? [{ token, index }] : []);
@@ -189,19 +215,21 @@ export const NativeMarkdown = memo(function NativeMarkdown({ text, formulas, the
       const start = offsets[startLine];
       const end = offsets[endLine];
       const content = text.slice(start, end);
-      if (!containsMath.test(content)) continue;
+      const block = tokens.slice(root.index, roots[index + 1]?.index);
+      if (!align && !containsMath.test(content) && !block.some((token) => token.children?.some((child) =>
+        child.type === "link_open" && anchors?.has(String(child.attrGet("href")))))) continue;
       if (text.slice(offset, start).trim()) parts.push({ text: text.slice(offset, start) });
-      parts.push({ text: content, tokens: tokens.slice(root.index, roots[index + 1]?.index) });
+      parts.push({ text: content, tokens: block });
       offset = end;
     }
     if (text.slice(offset).trim()) parts.push({ text: text.slice(offset) });
     return parts;
-  }, [text]);
+  }, [align, anchors, text]);
   return sections.map((section, index) => (
     <Fragment key={index}>
       {section.tokens ? (
         <NativeBlock source={text} tokens={section.tokens} theme={theme} formulas={formulas}
-          onCopy={onCopy} bodySize={bodySize} fontScale={fontScale} />
+          onCopy={onCopy} bodySize={bodySize} fontScale={fontScale} align={align} anchors={anchors} />
       ) : <Markdown>{section.text}</Markdown>}
     </Fragment>
   ));

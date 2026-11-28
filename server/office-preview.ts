@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { DOMParser, onErrorStopParsing } from "@xmldom/xmldom";
 import { fromBufferPromise } from "yauzl";
-import { officeExtensions } from "../shared/contracts";
+import { officeExtensions, type MarkdownSearchOptions } from "../shared/contracts";
 import type { createEngine } from "./engine";
 import { withWorkspaceFile } from "./workspace-file";
 
@@ -181,6 +181,16 @@ export function createOfficePreview(engine: ReturnType<typeof createEngine>) {
   }
 
   return {
+    async text(root: string, path: string, page: number) {
+      if (!officeExtensions.includes(extname(path).slice(1).toLowerCase())) return null;
+      const { key, data } = await prepare(root, path);
+      return data ? engine.dispatch({ kind: "office-text", key, data, page }) : null;
+    },
+    async search(root: string, path: string, query: string, options: MarkdownSearchOptions) {
+      if (!officeExtensions.includes(extname(path).slice(1).toLowerCase())) return null;
+      const { key, data } = await prepare(root, path);
+      return data ? engine.dispatch({ kind: "office-search", key, data, query, options }) : null;
+    },
     async layout(root: string, path: string) {
       const { key, data } = await prepare(root, path);
       return data ? engine.dispatch({ kind: "office-layout", key, data }) : null;

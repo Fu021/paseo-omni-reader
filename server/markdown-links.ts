@@ -2,8 +2,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { parse, postprocess, preprocess } from "micromark";
 import { decodeString } from "micromark-util-decode-string";
 
-function workspaceDestination(source: string, root: string, directory: string): string | undefined {
-  const target = decodeString(source);
+function workspaceDestination(target: string, root: string, directory: string): string | undefined {
   if (!target || /^(?:[a-z][a-z\d+.-]*:|[/\\~#?])/i.test(target)) return;
   const hash = target.indexOf("#");
   const route = hash === -1 ? target : target.slice(0, hash);
@@ -23,6 +22,10 @@ function workspaceDestination(source: string, root: string, directory: string): 
   return `./${encoded}${lines}${hash === -1 ? "" : target.slice(hash)}`;
 }
 
+export function rebaseMarkdownDestination(destination: string, root: string, filePath: string) {
+  return workspaceDestination(destination, root, dirname(resolve(root, filePath))) ?? destination;
+}
+
 export function rebaseMarkdownLinks(markdown: string, root: string, filePath: string): string {
   const directory = dirname(resolve(root, filePath));
   if (directory === resolve(root) || (!markdown.includes("](") && !markdown.includes("]:"))) return markdown;
@@ -32,7 +35,7 @@ export function rebaseMarkdownLinks(markdown: string, root: string, filePath: st
   for (const [action, token] of events) {
     if (action !== "enter" || (token.type !== "resourceDestinationString" && token.type !== "definitionDestinationString")) continue;
     const { start, end } = token;
-    const destination = workspaceDestination(markdown.slice(start.offset, end.offset), root, directory);
+    const destination = workspaceDestination(decodeString(markdown.slice(start.offset, end.offset)), root, directory);
     if (destination === undefined) continue;
     parts.push(markdown.slice(offset, start.offset), destination);
     offset = end.offset;

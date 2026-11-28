@@ -8,7 +8,6 @@ export const messageSchema = z.object({
   text: z.string(),
   phase: z.enum(["streaming", "complete"]).optional(),
   messageId: z.string().optional(),
-  plain: z.literal(true).optional(),
 });
 export const maxFormulaLength = 2400;
 export const formulasPerRequest = 12;
@@ -40,6 +39,8 @@ export const readMarkdownPage = defineRpc({
   name: "markdown.page",
   input: fileTarget.extend({
     offset: z.number().int().nonnegative(),
+    firstLine: z.number().int().positive().optional(),
+    atLine: z.number().int().positive().optional(),
     revision: z.string().max(200).optional(),
     fence: fenceSchema.optional(),
     table: tableContinuation.optional(),
@@ -49,8 +50,61 @@ export const readMarkdownPage = defineRpc({
     markdown: z.string(),
     nextOffset: z.number().int().nonnegative().nullable(),
     revision: z.string(),
+    offset: z.number().int().nonnegative(),
+    firstLine: z.number().int().positive(),
+    nextLine: z.number().int().positive(),
+    prefixLines: z.number().int().nonnegative(),
     fence: fenceSchema.optional(),
     table: tableContinuation.optional(),
+  }),
+});
+
+const lineNumber = z.number().int().positive();
+const markdownReference = z.object({
+  label: z.string(), destination: z.string(), title: z.string().optional(),
+});
+export type MarkdownReference = z.infer<typeof markdownReference>;
+
+export const readMarkdownInfo = defineRpc({
+  name: "markdown.info",
+  input: fileTarget,
+  output: z.object({
+    revision: z.string(),
+    lineCount: lineNumber,
+    headings: z.array(z.object({ line: lineNumber, anchor: z.string(), title: z.string(), level: z.number().int() })),
+    frontMatter: z.array(z.object({ key: z.string(), value: z.string() })),
+    frontMatterEnd: z.number().int().nonnegative(),
+    references: z.array(markdownReference),
+  }),
+});
+
+export const readMarkdownSource = defineRpc({
+  name: "markdown.source",
+  input: fileTarget.extend({ line: lineNumber, through: lineNumber.optional() }),
+  output: z.object({
+    revision: z.string(),
+    firstLine: lineNumber,
+    lines: z.array(z.object({ text: z.string(), ending: z.enum(["", "\n", "\r", "\r\n"]), truncated: z.boolean() })),
+    nextLine: lineNumber.nullable(),
+  }),
+});
+
+const markdownSearchOptions = z.object({
+  matchCase: z.boolean(), wholeWord: z.boolean(), regex: z.boolean(),
+});
+export type MarkdownSearchOptions = z.infer<typeof markdownSearchOptions>;
+export const markdownSearchPageSize = 512;
+
+export const searchMarkdownFile = defineRpc({
+  name: "markdown.search",
+  input: fileTarget.extend({
+    query: z.string().min(1).max(256), options: markdownSearchOptions, offset: z.number().int().nonnegative(),
+  }),
+  output: z.object({
+    revision: z.string(),
+    hits: z.array(z.object({ line: lineNumber, column: z.number().int().nonnegative(), length: z.number().int().nonnegative() })),
+    total: z.number().int().nonnegative(),
+    invalidPattern: z.boolean(),
   }),
 });
 
@@ -89,6 +143,14 @@ export const readWorksheet = defineRpc({
   name: "office.worksheet",
   input: fileTarget.extend({ sheet: z.number().int().min(0).max(255) }),
   output: z.object({ names: z.array(z.string()), sheet: worksheet }),
+});
+const worksheetMatch = z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative(),
+  z.number().int().nonnegative(), z.number().int().positive()]);
+export type WorksheetMatch = z.infer<typeof worksheetMatch>;
+export const findWorksheetText = defineRpc({
+  name: "office.worksheet-find",
+  input: readWorksheet.input.extend({ query: z.string().min(1).max(256), options: markdownSearchOptions }),
+  output: z.object({ matches: z.array(worksheetMatch), limited: z.boolean(), invalidPattern: z.boolean() }),
 });
 
 export const formulaSchema = z.object({
@@ -139,6 +201,20 @@ export const readDocumentLayout = defineRpc({
   name: "document.layout",
   input: fileTarget,
   output: z.array(pageRun).min(1).nullable(),
+});
+const pageGlyph = z.tuple([z.number(), z.number(), z.number(), z.number(), z.number(), z.number()]);
+export type PageGlyph = z.infer<typeof pageGlyph>;
+export const readDocumentText = defineRpc({
+  name: "document.text",
+  input: fileTarget.extend({ page: lineNumber }),
+  output: z.object({ text: z.string(), truncated: z.boolean(), glyphs: z.array(pageGlyph).optional() }).nullable(),
+});
+const pageTextMatch = z.tuple([lineNumber, z.number().int().nonnegative(), z.number().int().positive()]);
+export type PageTextMatch = z.infer<typeof pageTextMatch>;
+export const findDocumentText = defineRpc({
+  name: "document.find-text",
+  input: fileTarget.extend({ query: z.string().min(1).max(256), options: markdownSearchOptions }),
+  output: z.object({ matches: z.array(pageTextMatch), limited: z.boolean(), invalidPattern: z.boolean() }).nullable(),
 });
 export const renderPdfPage = defineRpc({ name: "pdf.page", input: pageTarget, output: renderedPage });
 export const renderOfficePage = defineRpc({ name: "office.page", input: pageTarget, output: renderedPage.nullable() });

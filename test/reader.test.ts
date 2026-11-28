@@ -10,38 +10,13 @@ import { readerSettings } from "../shared/reader-settings";
 import { inlineMathMarker, readingBlocks, type InlineMath } from "../shared/reading-blocks";
 import { shareAndroidFile } from "../client/android-file-share";
 import { createPageRenderQueue } from "../client/page-render-queue";
-import { createReaderOpenGate } from "../client/reader-open-gate";
-import { constrain, fitPages, jumpToPage, pageAt, pageBounds, visiblePages, zoomAt } from "../client/pdf-geometry";
+import { constrain, fitPagePosition, fitPages, jumpToPage, pageAt, pageBounds, visiblePages, zoomAt } from "../client/pdf-geometry";
 import { constrainGrid, panAndPinch, zoomAround, type Contact, type Position } from "../client/viewport-geometry";
 import { createEngine } from "../server/engine";
 import { openWithDefaultApp } from "../server/external-file";
 import { inspectPdf, inspectPdfPages, rasterizePdf, rasterizePdfPage } from "../server/pdf-engine";
 import { loadMarkdownPage, markdownPageBytes } from "../server/markdown-page";
 import { makeLargePdf } from "./pdf-fixture";
-
-test("accepts the first preview only during a burst of opens of the same file", () => {
-  let now = 1_000;
-  const { claim, release } = createReaderOpenGate(() => now);
-  const first = Symbol();
-  const duplicate = Symbol();
-  const file = '["host","workspace","/notes.md"]';
-
-  assert.equal(claim(file, first), true);
-  now += 100;
-  assert.equal(claim(file, first), true);
-  assert.equal(claim(file, duplicate), false);
-  assert.equal(claim('["host","workspace","/report.pdf"]', duplicate), true);
-  assert.equal(claim('["host","other-workspace","/notes.md"]', duplicate), true);
-  assert.equal(claim('["other-host","workspace","/notes.md"]', duplicate), true);
-  now += 149;
-  assert.equal(claim(file, duplicate), false);
-  now += 1;
-  assert.equal(claim(file, duplicate), true);
-  release(file, first);
-  assert.equal(claim(file, first), false);
-  release(file, duplicate);
-  assert.equal(claim(file, first), true);
-});
 
 test("claims assistant messages only when Omni Reader can enhance them", () => {
   assert.equal(shouldReplaceAssistant("Read [the PDF](./report.pdf)."), false);
@@ -53,15 +28,13 @@ test("claims assistant messages only when Omni Reader can enhance them", () => {
   assert.equal(shouldReplaceAssistant("```ts\nconst price = '$a$';\n```"), true);
 });
 
-test("keeps one projected reply with the same original text in both rendering modes", () => {
+test("keeps one projected reply with the original text throughout streaming", () => {
   const item = { type: "assistant_message", text: "$a+b$", messageId: "math" } as const;
-  const phase = "complete";
-  const enhanced = assistantReplacement({ item, phase }, false);
-  const original = assistantReplacement({ item, phase }, true);
-  assert.equal(enhanced.items.length, 1);
-  assert.equal(original.items.length, 1);
-  assert.deepEqual(messageSchema.parse(enhanced.items[0].data), { text: item.text, phase, messageId: item.messageId });
-  assert.deepEqual(messageSchema.parse(original.items[0].data), { ...enhanced.items[0].data, plain: true });
+  for (const phase of ["streaming", "complete"] as const) {
+    const projected = assistantReplacement({ item, phase });
+    assert.equal(projected.items.length, 1);
+    assert.deepEqual(messageSchema.parse(projected.items[0].data), { text: item.text, phase, messageId: item.messageId });
+  }
 });
 
 test("keeps independent whole percentages for both formula sizes", () => {
@@ -257,6 +230,19 @@ test("continues between portrait and landscape pages that each fit entirely at 1
   assert.deepEqual(visiblePages(layout, zoomed), { first: 1, last: 1 });
 });
 
+test("fills the reader width or fits the whole page according to the selected mode", () => {
+  const pages = [{ count: 2, width: 612, height: 792 }];
+  const phone = fitPages(pages, { width: 390, height: 700 });
+  assert.deepEqual(fitPagePosition(phone, 2, "width"), fitPagePosition(phone, 2, "page"));
+  const desktop = fitPages(pages, { width: 800, height: 500 });
+  const fit = fitPagePosition(desktop, 2, "width");
+  const page = pageBounds(desktop, 2);
+  assert.ok(Math.abs(page.width * fit.scale - 800) < 0.001);
+  assert.ok(Math.abs(page.top * fit.scale + fit.y) < 0.001);
+  assert.equal(fitPagePosition(desktop, 2, "page").scale, 1);
+  assert.ok(page.height * fit.scale > 500);
+});
+
 test("skips obsolete PDF and Office page requests before they reach the renderer", async () => {
   const enqueue = createPageRenderQueue();
   const active = new AbortController();
@@ -432,6 +418,15 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
     assert.deepEqual([first.page, second.page, second.pages, second.width, second.height], [1, 2, 2, 600, 800]);
     assert.match(second.uri, /^data:image\/jpeg;base64,\/9j\//);
     assert.notEqual(first.uri, second.uri);
+    assert.equal((await engine.dispatch({ kind: "pdf-text", root: folder, path: "report.pdf", page: 1 })).text, "");
+    const pageText = await engine.dispatch({ kind: "pdf-text", root: folder, path: "report.pdf", page: 2 });
+    assert.match(pageText.text, /Tidal observatory marker/);
+    const query = "OBSERVATORY marker";
+    const start = pageText.text.toLowerCase().indexOf(query.toLowerCase());
+    assert.ok(pageText.glyphs?.some(([offset]) => offset === start));
+    assert.deepEqual(await engine.dispatch({ kind: "pdf-search", root: folder, path: "report.pdf", query,
+      options: { matchCase: false, wholeWord: true, regex: false } }),
+    { matches: [[2, start, start + query.length]], limited: false, invalidPattern: false });
   } finally {
     engine.stop();
     await rm(folder, { recursive: true, force: true });

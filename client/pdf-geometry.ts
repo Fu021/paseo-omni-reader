@@ -1,5 +1,7 @@
 import type { PageRun } from "../shared/contracts";
-import { clamp, zoomAround, type Point, type Position, type Size } from "./viewport-geometry";
+import { boundZoom, clamp, zoomAround, type Point, type Position, type Size } from "./viewport-geometry";
+
+export type PageFit = "page" | "width";
 
 interface FittedRun extends Size {
   firstPage: number;
@@ -80,6 +82,13 @@ export function constrain(position: Position, layout: ReaderLayout): Position {
 
 export function jumpToPage(position: Position, number: number, layout: ReaderLayout) {
   return constrain({ ...position, y: -pageBounds(layout, number).top * position.scale }, layout);
+}
+
+export function fitPagePosition(layout: ReaderLayout, number: number, mode: PageFit, offset = 0) {
+  const page = pageBounds(layout, number);
+  const scale = mode === "width" ? boundZoom(layout.viewport.width / page.width) : 1;
+  return constrain({ scale, x: (layout.viewport.width - layout.width * scale) / 2,
+    y: -(page.top + page.height * offset) * scale }, layout);
 }
 
 export function zoomAt(position: Position, scale: number, anchor: Point, layout: ReaderLayout): Position {

@@ -1,6 +1,7 @@
 import type { Element } from "@xmldom/xmldom";
-import type { Worksheet } from "../shared/contracts";
+import type { MarkdownSearchOptions, Worksheet, WorksheetMatch } from "../shared/contracts";
 import { children, descendants, loadOffice, officeFileLimit, plainText, relatedParts } from "./office-xml";
+import { searchExpression } from "./text-search";
 import { withWorkspaceFile } from "./workspace-file";
 
 const workbookParts = /^xl\/(?:workbook\.xml|styles\.xml|sharedStrings\.xml|_rels\/workbook\.xml\.rels)$/;
@@ -214,7 +215,11 @@ function parseSheet(content: DocumentPart, shared: string[], cellStyles: CellSty
 }
 
 type DocumentPart = ReturnType<typeof relatedParts>[number]["content"];
-let cached: { key: string; workbook: Awaited<ReturnType<typeof loadWorkbook>> } | undefined;
+let cached: {
+  key: string;
+  workbook: Awaited<ReturnType<typeof loadWorkbook>>;
+  sheet?: { index: number; data: Worksheet };
+} | undefined;
 
 async function loadWorkbook(bytes: Buffer) {
   const documents = await loadOffice(bytes, (path) => workbookParts.test(path));
@@ -233,18 +238,39 @@ export function loadWorksheet(root: string, path: string, selected: number) {
     if (size > officeFileLimit) throw new Error("Document exceeds the preview limit.");
     const key = JSON.stringify([root, path, revision]);
     if (cached?.key !== key) cached = { key, workbook: await loadWorkbook(await file.readFile()) };
-    const { sheets, bytes, shared, styles } = cached.workbook;
-    const selectedSheet = sheets[Math.min(selected, sheets.length - 1)];
-    let content: DocumentPart;
-    if (selectedSheet) {
-      if (!selectedSheet.path || !worksheetPart.test(selectedSheet.path)) throw new Error("Unsupported worksheet part.");
-      const parts = await loadOffice(bytes, (name) => name === selectedSheet.path);
-      content = parts.get(selectedSheet.path);
-      if (!content) throw new Error("Missing worksheet part.");
+    const current = cached;
+    const { sheets, bytes, shared, styles } = current.workbook;
+    const index = Math.min(selected, sheets.length - 1);
+    if (current.sheet?.index !== index) {
+      const selectedSheet = sheets[index];
+      let content: DocumentPart;
+      if (selectedSheet) {
+        if (!selectedSheet.path || !worksheetPart.test(selectedSheet.path)) throw new Error("Unsupported worksheet part.");
+        const parts = await loadOffice(bytes, (name) => name === selectedSheet.path);
+        content = parts.get(selectedSheet.path);
+        if (!content) throw new Error("Missing worksheet part.");
+      }
+      current.sheet = { index, data: parseSheet(content, shared, styles) };
     }
     return {
       names: sheets.map(({ name }) => name),
-      sheet: parseSheet(content, shared, styles),
+      sheet: current.sheet.data,
     };
   });
+}
+
+export async function searchWorksheet(root: string, path: string, index: number, query: string, options: MarkdownSearchOptions) {
+  const expression = searchExpression(query, options);
+  const matches: WorksheetMatch[] = [];
+  if (!expression) return { matches, limited: false, invalidPattern: true };
+  const { sheet } = await loadWorksheet(root, path, index);
+  for (const [row, column, text] of sheet.cells) {
+    if (!sheet.rows[row] || !sheet.columns[column]) continue;
+    for (const match of text.matchAll(expression)) {
+      if (!match[0].length) continue;
+      if (matches.length >= 10_000) return { matches, limited: true, invalidPattern: false };
+      matches.push([row, column, match.index, match.index + match[0].length]);
+    }
+  }
+  return { matches, limited: sheet.truncated, invalidPattern: false };
 }

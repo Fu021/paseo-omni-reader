@@ -21,12 +21,25 @@ parentPort?.on("message", async (request: EngineRequest) => {
       result = request.kind === "office-layout"
         ? await inspectPdfPages(request.key, bytes)
         : await rasterizePdfPage(request.key, bytes, request.page, request.pixels);
+    } else if (request.kind === "pdf-text" || request.kind === "pdf-search") {
+      const { pdfText, searchPdf } = await import("./pdf-engine");
+      result = request.kind === "pdf-text" ? await pdfText(request.root, request.path, request.page)
+        : await searchPdf(request.root, request.path, request.query, request.options);
+    } else if (request.kind === "office-text" || request.kind === "office-search") {
+      const { readPdfText, findPageTextMatches } = await import("./pdf-engine");
+      const bytes = async () => request.data;
+      result = request.kind === "office-text" ? await readPdfText(request.key, bytes, request.page)
+        : await findPageTextMatches(request.key, bytes, request.query, request.options);
+    } else if (request.kind === "markdown-search") {
+      const { findMarkdownLines } = await import("./markdown-index");
+      result = await findMarkdownLines(request.root, request.path, request.query, request.options, request.offset);
     } else if (request.kind === "document") {
       const { loadStructuredDocument } = await import("./structured-document");
       result = await loadStructuredDocument(request.root, request.path);
-    } else if (request.kind === "worksheet") {
-      const { loadWorksheet } = await import("./worksheet");
-      result = await loadWorksheet(request.root, request.path, request.sheet);
+    } else if (request.kind === "worksheet" || request.kind === "worksheet-search") {
+      const { loadWorksheet, searchWorksheet } = await import("./worksheet");
+      result = request.kind === "worksheet" ? await loadWorksheet(request.root, request.path, request.sheet)
+        : await searchWorksheet(request.root, request.path, request.sheet, request.query, request.options);
     } else {
       throw new Error("Invalid document request.");
     }

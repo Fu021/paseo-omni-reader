@@ -18,9 +18,11 @@ export function useNativeContacts(
   enabled: boolean,
   onMove: (previous: Contact[], next: Contact[]) => void,
   onGlide: (delta: Point) => boolean,
+  intercept?: (contacts: Contact[], pageContacts: Contact[]) => boolean,
 ): { handlers: GestureResponderHandlers; stopInertia: () => void } {
   const move = useRef(onMove);
   const glide = useRef(onGlide);
+  const interaction = useRef(intercept);
   const origin = useRef<Point>({ x: 0, y: 0 });
   const previous = useRef<Contact[]>([]);
   const pending = useRef<Contact[]>([]);
@@ -37,7 +39,8 @@ export function useNativeContacts(
   useLayoutEffect(() => {
     move.current = onMove;
     glide.current = onGlide;
-  }, [onMove, onGlide]);
+    interaction.current = intercept;
+  }, [onMove, onGlide, intercept]);
   useLayoutEffect(() => () => {
     stopInertia();
     if (frame.current !== undefined) cancelAnimationFrame(frame.current);
@@ -46,6 +49,10 @@ export function useNativeContacts(
   }, [enabled, stopInertia]);
 
   if (!enabled) return { handlers: {}, stopInertia };
+
+  const toViewport = (contact: Contact) => ({
+    id: contact.id, x: contact.x - origin.current.x, y: contact.y - origin.current.y,
+  });
 
   function flush() {
     if (frame.current !== undefined) cancelAnimationFrame(frame.current);
@@ -64,24 +71,25 @@ export function useNativeContacts(
     } else {
       velocity.current = { x: 0, y: 0 };
     }
-    const toViewport = (contact: Contact) => ({
-      id: contact.id, x: contact.x - origin.current.x, y: contact.y - origin.current.y,
-    });
-    if (before.length && next.length) move.current(before.map(toViewport), next.map(toViewport));
+    const contacts = next.map(toViewport);
+    if (interaction.current?.(contacts, next)) velocity.current = { x: 0, y: 0 };
+    else if (before.length && next.length) move.current(before.map(toViewport), contacts);
   }
 
   function rebase(event: GestureResponderEvent) {
     if (frame.current !== undefined) flush();
     previous.current = readContacts(event);
+    interaction.current?.(previous.current.map(toViewport), previous.current);
     lastMove.current = performance.now();
     velocity.current = { x: 0, y: 0 };
   }
 
   function release() {
     if (frame.current !== undefined) flush();
+    const handled = interaction.current?.([], []);
     const now = performance.now();
     const speed = Math.hypot(velocity.current.x, velocity.current.y);
-    const canGlide = previous.current.length === 1 && now - lastMove.current <= flickWindow && speed >= minFlingSpeed;
+    const canGlide = !handled && previous.current.length === 1 && now - lastMove.current <= flickWindow && speed >= minFlingSpeed;
     previous.current = [];
     if (!canGlide) return;
 
@@ -123,6 +131,7 @@ export function useNativeContacts(
     },
     onResponderRelease: release,
     onResponderTerminate() {
+      interaction.current?.([], []);
       stopInertia();
       if (frame.current !== undefined) cancelAnimationFrame(frame.current);
       frame.current = undefined;

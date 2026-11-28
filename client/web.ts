@@ -13,6 +13,12 @@ export const webTableStyles = {
   cell: { display: "table-cell", verticalAlign: "middle", overflowWrap: "anywhere" },
 } as unknown as Record<"table" | "row" | "cell", ViewStyle>;
 
+type DesktopBridge = { invoke(command: "desktop_daemon_status"): Promise<unknown> };
+
+export function getDesktopBridge() {
+  if (typeof window !== "undefined") return (window as Window & { paseoDesktop?: DesktopBridge }).paseoDesktop;
+}
+
 export function downloadLocalFile(url: string, name: string) {
   if (!url.startsWith("blob:")) throw new Error("Unsupported file URL.");
   const anchor = document.createElement("a");
@@ -27,6 +33,175 @@ export function setWebTitle(node: unknown, title: string) {
   if (!(node instanceof HTMLElement)) return;
   node.title = title;
   return () => node.removeAttribute("title");
+}
+
+export function bindMarkdownAnchors(node: unknown, onAnchor: (href: string) => boolean) {
+  if (!(node instanceof HTMLElement)) return;
+  const intercept = (event: MouseEvent) => {
+    if (!(event.target instanceof Element)) return;
+    const href = event.target.closest("a")?.getAttribute("href");
+    if (!href?.startsWith("#") || !onAnchor(href)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  node.addEventListener("click", intercept, true);
+  return () => node.removeEventListener("click", intercept, true);
+}
+
+export function bindReaderFind(node: unknown, testID: string, actions: {
+  open: () => void; close: () => void; move: (step: number) => void; isOpen: () => boolean;
+  focusReader?: () => void;
+}) {
+  if (!(node instanceof HTMLElement)) return;
+  const keydown = (event: KeyboardEvent) => {
+    if (event.isComposing || event.altKey) return;
+    const focus = document.activeElement;
+    const inReader = node.contains(focus);
+    const inFind = !!focus?.closest(`[data-testid="${testID}"]`) && inReader;
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "f"
+      && (inReader || node.matches(":hover"))) actions.open();
+    else if (inReader && actions.isOpen() && event.key === "Escape" && !focus?.closest('[role="menu"]')) {
+      actions.close();
+      if (actions.focusReader) actions.focusReader();
+      else node.focus({ preventScroll: true });
+    }
+    else if (inFind && event.key === "Enter" && focus instanceof HTMLInputElement) actions.move(event.shiftKey ? -1 : 1);
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  window.addEventListener("keydown", keydown, true);
+  return () => window.removeEventListener("keydown", keydown, true);
+}
+
+export function focusReaderFind(node: unknown, testID: string) {
+  if (node instanceof HTMLElement) {
+    const input = node.querySelector<HTMLInputElement>(`[data-testid="${testID}"] input`);
+    input?.focus();
+    input?.select();
+  }
+}
+
+export function readerSelection(node: unknown) {
+  if (!(node instanceof HTMLElement)) return "";
+  const selection = window.getSelection();
+  return selection && node.contains(selection.anchorNode) && node.contains(selection.focusNode)
+    ? selection.toString() : "";
+}
+
+export function bindReaderCopy(node: unknown, copied: () => void) {
+  if (!(node instanceof HTMLElement)) return;
+  const onCopy = (event: ClipboardEvent) => {
+    if (event.defaultPrevented || (event.target instanceof Element && event.target.closest("input,textarea,[contenteditable=true]"))) return;
+    if (readerSelection(node)) copied();
+  };
+  node.addEventListener("copy", onCopy);
+  return () => node.removeEventListener("copy", onCopy);
+}
+
+export function focusWebReader(node: unknown) {
+  if (node instanceof HTMLElement) node.focus({ preventScroll: true });
+}
+
+export function bindWorksheetGrid(node: unknown, open: (point: Point) => boolean) {
+  if (!(node instanceof HTMLElement)) return;
+  const contextMenu = (event: MouseEvent) => {
+    const bounds = node.getBoundingClientRect();
+    if (!open({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const wheel = (event: WheelEvent) => {
+    if (event.ctrlKey || event.metaKey || !(event.target instanceof Element) ||
+      !event.target.closest('[data-testid^="omni-worksheet-frozen-"]')) return;
+    const horizontal = node.querySelector<HTMLElement>('[data-testid="omni-worksheet-horizontal"]');
+    const vertical = node.querySelector<HTMLElement>('[data-testid="omni-worksheet-vertical"]');
+    if (!horizontal || !vertical) return;
+    const before = { x: horizontal.scrollLeft, y: vertical.scrollTop };
+    const shift = event.shiftKey && !event.deltaX;
+    const stepX = event.deltaMode === 2 ? horizontal.clientWidth : event.deltaMode === 1 ? 16 : 1;
+    const stepY = event.deltaMode === 2 ? vertical.clientHeight : event.deltaMode === 1 ? 16 : 1;
+    horizontal.scrollLeft += (shift ? event.deltaY : event.deltaX) * stepX;
+    if (!shift) vertical.scrollTop += event.deltaY * stepY;
+    if (horizontal.scrollLeft !== before.x || vertical.scrollTop !== before.y) event.preventDefault();
+  };
+  node.addEventListener("contextmenu", contextMenu, true);
+  node.addEventListener("wheel", wheel, { passive: false });
+  return () => {
+    node.removeEventListener("contextmenu", contextMenu, true);
+    node.removeEventListener("wheel", wheel);
+  };
+}
+
+export function bindWorksheetMenuDismiss(node: unknown, close: () => void) {
+  if (!(node instanceof HTMLElement)) return;
+  node.focus({ preventScroll: true });
+  const outside = (event: Event) => {
+    if (event.target instanceof Node && !node.contains(event.target)) close();
+  };
+  const escape = (event: KeyboardEvent) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+  };
+  document.addEventListener("pointerdown", outside, true);
+  document.addEventListener("wheel", outside, { capture: true, passive: true });
+  node.addEventListener("keydown", escape);
+  return () => {
+    document.removeEventListener("pointerdown", outside, true);
+    document.removeEventListener("wheel", outside, true);
+    node.removeEventListener("keydown", escape);
+  };
+}
+
+export function observeCodeFont(node: unknown, update: (size: number, family: string, digitWidth: number) => void) {
+  if (!(node instanceof HTMLElement)) return;
+  const canvas = node.ownerDocument.createElement("canvas").getContext("2d");
+  let observedCode: Element | null = null;
+  const measure = () => {
+    const code = node.querySelector('[data-paseo-md-copy="code"]')
+      ?? node.querySelector("pre code, pre, code, [data-pmono] [dir]");
+    if (!code) return;
+    if (code !== observedCode) {
+      if (observedCode) observer.unobserve(observedCode);
+      observedCode = code;
+      observer.observe(code);
+    }
+    const style = getComputedStyle(code);
+    const fontSize = style.fontSize;
+    const family = style.getPropertyValue("--fontFamily-mono").trim() || style.fontFamily;
+    const size = Number.parseFloat(fontSize);
+    if (!(size > 0)) return;
+    if (canvas) canvas.font = `${fontSize} ${family}`;
+    update(size, family, canvas?.measureText("0").width ?? size * 0.62);
+  };
+  const observer = new ResizeObserver(measure);
+  const appearance = new MutationObserver(measure);
+  observer.observe(node);
+  appearance.observe(node, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "style"] });
+  node.ownerDocument.fonts?.addEventListener("loadingdone", measure);
+  measure();
+  return () => {
+    observer.disconnect();
+    appearance.disconnect();
+    node.ownerDocument.fonts?.removeEventListener("loadingdone", measure);
+  };
+}
+
+export function revealMarkdownMatch(node: unknown) {
+  if (!(node instanceof HTMLElement)) return;
+  const match = node.querySelector('[data-active-match="true"]');
+  if (!match) return;
+  for (let scroller = match.parentElement; scroller && node.contains(scroller); scroller = scroller.parentElement) {
+    if (scroller.scrollWidth <= scroller.clientWidth || !["auto", "scroll"].includes(getComputedStyle(scroller).overflowX)) continue;
+    const viewport = scroller.getBoundingClientRect();
+    const marker = match.getBoundingClientRect();
+    const gutter = match.closest('[data-source-row="true"]')?.querySelector('[data-source-gutter="true"]')?.getBoundingClientRect();
+    const left = Math.max(viewport.left, gutter?.right ?? viewport.left);
+    if (marker.left < left || marker.right > viewport.right) scroller.scrollLeft += marker.left - left - 12;
+    return;
+  }
 }
 
 export function bindWebSliderKeys(node: unknown, change: (value: number) => void) {
@@ -226,7 +401,10 @@ export function bindWebFormulas(node: unknown, actions: {
 }
 
 export function bindWebGestures(node: unknown, actions: {
-  contacts: (contacts: Contact[]) => void;
+  contacts: (contacts: Contact[], pointerType: string) => boolean | void;
+  overText?: (point: Point) => boolean;
+  selectedText?: () => string;
+  onCopied?: () => void;
   scroll: (delta: Point) => void;
   zoom: (factor: number) => void;
   fit: () => void;
@@ -240,25 +418,30 @@ export function bindWebGestures(node: unknown, actions: {
     const { left, top } = surface.getBoundingClientRect();
     return { x: event.clientX - left, y: event.clientY - top };
   };
-  const changed = () => actions.contacts([...pointers.values()].slice(0, 2));
+  const changed = (event: PointerEvent) => {
+    const selecting = actions.contacts([...pointers.values()].slice(0, 2), event.pointerType);
+    surface.style.cursor = selecting || (!pointers.size && actions.overText?.(position(event))) ? "text"
+      : pointers.size ? "grabbing" : "grab";
+  };
   surface.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || event.target instanceof Element && event.target.closest("button, [role=button]")) return;
     event.preventDefault();
     surface.focus({ preventScroll: true });
     surface.setPointerCapture(event.pointerId);
     pointers.set(event.pointerId, { id: event.pointerId, ...position(event) });
-    surface.style.cursor = "grabbing";
-    changed();
+    changed(event);
   }, options);
   surface.addEventListener("pointermove", (event) => {
-    if (!pointers.has(event.pointerId)) return;
+    if (!pointers.has(event.pointerId)) {
+      if (!pointers.size && actions.overText) surface.style.cursor = actions.overText(position(event)) ? "text" : "grab";
+      return;
+    }
     pointers.set(event.pointerId, { id: event.pointerId, ...position(event) });
-    changed();
+    changed(event);
   }, options);
   const up = (event: PointerEvent) => {
     if (!pointers.delete(event.pointerId)) return;
-    if (!pointers.size) surface.style.cursor = "grab";
-    changed();
+    changed(event);
   };
   for (const name of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
     surface.addEventListener(name, up, options);
@@ -269,6 +452,14 @@ export function bindWebGestures(node: unknown, actions: {
     const units = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? surface.clientHeight : 1;
     actions.scroll({ x: event.deltaX * units, y: event.deltaY * units });
   }, { ...options, passive: false });
+  if (actions.selectedText) surface.addEventListener("copy", (event) => {
+    const text = actions.selectedText?.();
+    if (event.target !== surface || !text || !event.clipboardData) return;
+    event.clipboardData.setData("text/plain", text);
+    actions.onCopied?.();
+    event.preventDefault();
+    event.stopPropagation();
+  }, options);
   surface.addEventListener("keydown", (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey || event.target !== surface) return;
     switch (event.key) {
@@ -288,6 +479,6 @@ export function bindWebGestures(node: unknown, actions: {
   return () => {
     listeners.abort();
     surface.style.cursor = "";
-    actions.contacts([]);
+    actions.contacts([], "");
   };
 }

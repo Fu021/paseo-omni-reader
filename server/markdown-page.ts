@@ -2,6 +2,7 @@ import { StringDecoder } from "node:string_decoder";
 import { markdownExtensions, maxFormulaLength, maxMarkdownTableLine, type Fence, type TableContinuation } from "../shared/contracts";
 import { findFormulas, lineOffsets, markdownParser, possibleMath } from "../shared/markdown-math";
 import { rebaseMarkdownLinks } from "./markdown-links";
+import { markdownPreviewPosition } from "./markdown-index";
 import { withWorkspaceFile } from "./workspace-file";
 
 export const markdownPageBytes = 24 * 1024;
@@ -88,9 +89,17 @@ function continueTable(text: string, prefix: string, boundary: Boundary): Bounda
 
 export async function loadMarkdownPage(
   root: string, path: string, offset: number, revision?: string, fence?: Fence, table?: TableContinuation,
+  firstLine = 1, atLine?: number,
 ) {
-  return withWorkspaceFile(root, path, markdownExtensions, async (file, size, stamp) => {
+  return withWorkspaceFile(root, path, markdownExtensions, async (file, size, stamp, actual) => {
     if ((revision && stamp !== revision) || offset > size) throw new Error("File changed. Reload to read the new version.");
+    if (atLine !== undefined) {
+      const position = await markdownPreviewPosition(file, size, stamp, actual, atLine);
+      offset = position.offset;
+      firstLine = position.line;
+      fence = position.fence;
+      table = position.table;
+    }
     const pageBytes = Math.min(markdownPageBytes, size - offset);
     const bytes = Buffer.alloc(Math.min(pageBytes + mathLookaheadBytes, size - offset));
     let length = 0;
@@ -114,7 +123,9 @@ export async function loadMarkdownPage(
     const nextOffset = offset + encoded.length < size ? offset + encoded.length : null;
     return {
       source, markdown: rebaseMarkdownLinks(prefix + source + suffix, root, path),
-      nextOffset, revision: stamp, fence: boundary.fence, table: boundary.table,
+      nextOffset, offset, revision: stamp, fence: boundary.fence, table: boundary.table,
+      firstLine, nextLine: firstLine + (source.match(/\r\n|\r|\n/g)?.length ?? 0),
+      prefixLines: fence ? 1 : table ? 2 : 0,
     };
   });
 }

@@ -1,6 +1,8 @@
 import { PDFiumLibrary, type PDFiumDocument } from "@hyzyla/pdfium/inline";
 import { encode } from "jpeg-js";
-import type { PageRun } from "../shared/contracts";
+import type { MarkdownSearchOptions, PageRun, PageTextMatch } from "../shared/contracts";
+import { readPageText } from "./pdf-text-geometry";
+import { searchExpression } from "./text-search";
 import { withWorkspaceFile } from "./workspace-file";
 
 const maxPdfBytes = 128 * 1024 * 1024;
@@ -30,6 +32,14 @@ export function inspectPdf(root: string, path: string) {
   return usePdfFile(root, path, inspectPdfPages);
 }
 
+export function pdfText(root: string, path: string, page: number) {
+  return usePdfFile(root, path, (key, bytes) => readPdfText(key, bytes, page));
+}
+
+export function searchPdf(root: string, path: string, query: string, options: MarkdownSearchOptions) {
+  return usePdfFile(root, path, (key, bytes) => findPageTextMatches(key, bytes, query, options));
+}
+
 async function openDocument(key: string, bytes: () => Promise<Uint8Array>) {
   if (opened?.key !== key) {
     opened?.document.destroy();
@@ -39,6 +49,42 @@ async function openDocument(key: string, bytes: () => Promise<Uint8Array>) {
     opened = { key, document };
   }
   return opened;
+}
+
+export async function readPdfText(key: string, bytes: () => Promise<Uint8Array>, number: number) {
+  const { document } = await openDocument(key, bytes);
+  if (number > document.getPageCount()) return { text: "", truncated: false, glyphs: [] };
+  const page = document.getPage(number - 1);
+  try {
+    return readPageText(page, true);
+  } finally {
+    page.close();
+  }
+}
+
+export async function findPageTextMatches(key: string, bytes: () => Promise<Uint8Array>, query: string, options: MarkdownSearchOptions) {
+  const expression = searchExpression(query, options, true);
+  const matches: PageTextMatch[] = [];
+  if (!expression) return { matches, limited: false, invalidPattern: true };
+  const { document } = await openDocument(key, bytes);
+  const count = document.getPageCount();
+  const limit = 10_000;
+  let limited = false;
+  for (let number = 1; number <= count; number++) {
+    const page = document.getPage(number - 1);
+    try {
+      const { text, truncated } = readPageText(page, false);
+      limited ||= truncated;
+      for (const match of text.matchAll(expression)) {
+        if (!match[0].length) continue;
+        if (matches.length >= limit) return { matches, limited: true, invalidPattern: false };
+        matches.push([number, match.index, match.index + match[0].length]);
+      }
+    } finally {
+      page.close();
+    }
+  }
+  return { matches, limited, invalidPattern: false };
 }
 
 function readSize(page: ReturnType<PDFiumDocument["getPage"]>) {

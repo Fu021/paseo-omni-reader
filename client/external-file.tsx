@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Alert, Platform, Share } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
@@ -7,9 +7,9 @@ import { openWorkspaceFile } from "../shared/contracts";
 import { shareAndroidFile } from "./android-file-share";
 import { Control } from "./controls";
 import { messages } from "./messages";
-import { downloadLocalFile } from "./web";
+import { downloadLocalFile, getDesktopBridge } from "./web";
 
-type DesktopBridge = { invoke(command: "desktop_daemon_status"): Promise<unknown> };
+type DesktopBridge = NonNullable<ReturnType<typeof getDesktopBridge>>;
 
 async function desktopDaemonId(desktop: DesktopBridge) {
   const status = await desktop.invoke("desktop_daemon_status");
@@ -22,9 +22,8 @@ export function ExternalFileAction({ file, workspaceId, host, theme, layout }: P
   const toast = useToast();
   const openLocal = useRpc(openWorkspaceFile);
   const [opening, setOpening] = useState(false);
-  const desktop = Platform.OS === "web" && typeof window !== "undefined"
-    ? (window as Window & { paseoDesktop?: DesktopBridge }).paseoDesktop
-    : undefined;
+  const handoff = useRef(false);
+  const desktop = Platform.OS === "web" ? getDesktopBridge() : undefined;
   const localDaemon = useQuery({
     queryKey: ["omni-reader", "desktop-daemon"],
     queryFn: () => desktopDaemonId(desktop!),
@@ -48,6 +47,8 @@ export function ExternalFileAction({ file, workspaceId, host, theme, layout }: P
     ], { cancelable: true });
   };
   const open = async () => {
+    if (handoff.current || checking) return;
+    handoff.current = true;
     setOpening(true);
     try {
       if (Platform.OS === "android") {
@@ -66,6 +67,7 @@ export function ExternalFileAction({ file, workspaceId, host, theme, layout }: P
       if (Platform.OS === "android") showAndroidFallback();
       else toast.error(t(localFile ? "externalAppError" : download ? "downloadError" : "externalError"));
     } finally {
+      handoff.current = false;
       setOpening(false);
     }
   };

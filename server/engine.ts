@@ -3,7 +3,7 @@ import documentWorker from "./generated/document-worker";
 import mathWorker from "./generated/math-worker";
 import type { EngineRequest, EngineResponse, EngineResults } from "./worker-protocol";
 
-function createWorkerQueue(source: string) {
+function createWorkerQueue(source: string, timeout = 20_000) {
   let worker: Worker | undefined;
   let queue = Promise.resolve();
   let idle: ReturnType<typeof setTimeout> | undefined;
@@ -51,7 +51,7 @@ function createWorkerQueue(source: string) {
         const deadline = setTimeout(() => {
           finish(new Error("Rendering took too long. Please retry."));
           release();
-        }, 20_000);
+        }, timeout);
         current.once("message", finish);
         current.once("exit", exited);
         current.postMessage(request);
@@ -71,7 +71,10 @@ export function createEngine() {
   const math = createWorkerQueue(mathWorker);
   const document = createWorkerQueue(documentWorker);
   const office = createWorkerQueue(documentWorker);
-  const queues = { math, document, pdf: document, "pdf-layout": document, office, "office-layout": office, worksheet: office };
+  const search = createWorkerQueue(documentWorker, 5_000);
+  const queues = { math, document, pdf: document, "pdf-layout": document, "pdf-text": document, "pdf-search": search,
+    office, "office-layout": office, "office-text": office, "office-search": search, worksheet: office,
+    "markdown-search": search, "worksheet-search": search };
   return {
     dispatch: <Request extends EngineRequest>(request: Request) =>
       queues[request.kind].dispatch(request),
@@ -79,6 +82,7 @@ export function createEngine() {
       math.stop();
       document.stop();
       office.stop();
+      search.stop();
     },
   };
 }

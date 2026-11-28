@@ -2,15 +2,13 @@ import type { PluginTimelineTransformerContribution } from "@getpaseo/plugin/cli
 import { markdownKind } from "../shared/contracts";
 import { findFormulas } from "../shared/markdown-math";
 
-export type AssistantReply = { text: string; messageId?: string };
-
-export function assistantReplyKey({ messageId, text }: AssistantReply): string {
+export function assistantReplyKey({ messageId, text }: { text: string; messageId?: string }): string {
   return messageId ? `id:${messageId}` : `text:${text}`;
 }
 
 type AssistantTransformInput = Parameters<PluginTimelineTransformerContribution<"assistant_message">["transform"]>[0];
 
-export function assistantReplacement({ item, phase }: AssistantTransformInput, plain: boolean) {
+export function assistantReplacement({ item, phase }: AssistantTransformInput) {
   return {
     items: [{
       type: "plugin" as const, kind: markdownKind, version: 1,
@@ -18,7 +16,6 @@ export function assistantReplacement({ item, phase }: AssistantTransformInput, p
         text: item.text,
         phase,
         ...(item.messageId ? { messageId: item.messageId } : {}),
-        ...(plain ? { plain: true as const } : {}),
       },
     }],
   };

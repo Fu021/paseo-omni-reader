@@ -68,8 +68,8 @@ function ZoomSlider({ value, disabled, compact, theme, change }: {
       onResponderTerminationRequest={() => false}
       style={[
         {
-          width: compact ? 104 : 116, minWidth: 64, flexShrink: 1,
-          height: compact ? 40 : 32, justifyContent: "center", opacity: disabled ? 0.45 : 1,
+          width: compact ? 104 : 116, minWidth: web ? 64 : 28, flexShrink: 1,
+          height: web ? compact ? 40 : 32 : 32, justifyContent: "center", opacity: disabled ? 0.45 : 1,
         },
         web && ({ touchAction: "none", cursor: disabled ? "default" : "pointer" } as ViewStyle),
       ]}
@@ -95,6 +95,7 @@ export function ZoomControls({ scale, disabled, compact, theme, stepZoom, setZoo
   const label = t("zoomPercent");
   const field = useWebTitle(label);
   const [draft, setDraft] = useState<string>();
+  const web = Platform.OS === "web";
   const percent = Math.round(scale * 100);
   const apply = (percent: number) => setZoom(clamp(percent, minZoomPercent, maxZoomPercent) / 100);
   const commit = () => {
@@ -104,13 +105,16 @@ export function ZoomControls({ scale, disabled, compact, theme, stepZoom, setZoo
   };
   return (
     <View style={{ flexDirection: "row", flexShrink: 1, alignItems: "center", gap: 3 }}>
-      <Control title={t("zoomOut")} icon="Minus" disabled={disabled || percent <= minZoomPercent}
+      <Control title={t("zoomOut")} icon="Minus" small={!web} disabled={disabled || percent <= minZoomPercent}
         onPress={() => stepZoom(1 / 1.25)} theme={theme} compact={compact} />
       <ZoomSlider value={percent} change={apply} disabled={disabled} compact={compact} theme={theme} />
-      <Control title={t("zoomIn")} icon="Plus" disabled={disabled || percent >= maxZoomPercent}
-        onPress={() => stepZoom(1.25)} theme={theme} compact={compact} />
+      {!web && draft !== undefined
+        ? <Control title={t("applyZoom")} icon="Check" theme={theme} compact={compact} small disabled={disabled}
+            onPress={() => { commit(); Keyboard.dismiss(); }} />
+        : <Control title={t("zoomIn")} icon="Plus" small={!web} disabled={disabled || percent >= maxZoomPercent}
+            onPress={() => stepZoom(1.25)} theme={theme} compact={compact} />}
       <View ref={field} style={{
-        flexDirection: "row", alignItems: "center", height: compact ? 36 : 28, width: 58,
+        flexDirection: "row", alignItems: "center", gap: 4, height: web && compact ? 36 : 28, width: 62,
         borderWidth: 1, borderRadius: 5, borderColor: theme.colors.border, paddingRight: 5,
         opacity: disabled ? 0.45 : 1,
       }}>
@@ -131,10 +135,6 @@ export function ZoomControls({ scale, disabled, compact, theme, stepZoom, setZoo
         />
         <Text importantForAccessibility="no" style={{ fontSize: 13, color: theme.colors.foregroundMuted }}>%</Text>
       </View>
-      {draft !== undefined && Platform.OS !== "web" && (
-        <Control title={t("applyZoom")} icon="Check" theme={theme} compact={compact} disabled={disabled}
-          onPress={() => { commit(); Keyboard.dismiss(); }} />
-      )}
     </View>
   );
 }

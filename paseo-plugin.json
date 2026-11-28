@@ -1,6 +1,6 @@
 {
   "id": "paseo-omni-reader",
-  "name": "Paseo Omni Reader",
+  "name": "Omni Reader",
   "description": "Read streaming LaTeX, preview workspace documents and spreadsheets, and zoom and pan PDFs in Paseo.",
   "icon": "assets/icon.png",
   "media": [
@@ -10,7 +10,7 @@
   ],
   "translations": {
     "zh-CN": {
-      "name": "Paseo Omni Reader",
+      "name": "Omni Reader",
       "description": "在 Paseo 中流式阅读 LaTeX，预览工作区文档与表格，缩放和平移 PDF。"
     }
   },
