@@ -389,21 +389,33 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
         { tex: "E=mc^2", display: false }, { tex: "\\frac{a+b}{2}", display: true },
         { tex: "\\frac{a+b}{2}", display: false },
         { tex: "\\unknowncommand{x}", display: false },
+        { tex: String.raw`G\text{ 负定}\quad\Longleftrightarrow\quad-G\text{ 正定}.`, display: true },
       ],
     });
-    const [equation, display, fraction, invalid] = math.images;
-    for (const image of [equation, display, fraction]) {
+    const [equation, display, fraction, invalid, chinese] = math.images;
+    for (const image of [equation, display, fraction, chinese]) {
       assert.match(image?.uris[0] ?? "", /^data:image\/svg\+xml;base64,/);
     }
-    const glyphs = (uri: string) => Buffer.from(uri.split(",")[1], "base64").toString("utf8").match(/<g data-mml-node="mfrac">.*<\/g><\/g><\/svg>/)?.[0];
-    assert.ok(display && fraction && glyphs(fraction.uris[0]));
+    const svg = (uri: string) => Buffer.from(uri.split(",")[1], "base64").toString("utf8");
+    const glyphs = (uri: string) => svg(uri).match(/<path [^>]+>/g);
+    assert.ok(display && fraction && chinese);
+    assert.equal(glyphs(fraction.uris[0])?.length, 4);
+    assert.match(svg(fraction.uris[0]), /<line /);
     assert.ok(fraction.width >= display.width * 1.3 && fraction.height >= display.height * 1.3);
-    assert.equal(glyphs(fraction.uris[0]), glyphs(display.uris[0]));
+    assert.deepEqual(glyphs(fraction.uris[0]), glyphs(display.uris[0]));
+    const chineseGlyphs = glyphs(chinese.uris[0]);
+    assert.ok(chineseGlyphs && chineseGlyphs.length >= 8);
+    const repeatedGlyph = chineseGlyphs[2]?.match(/ d="([^"]+)"/)?.[1];
+    assert.ok(repeatedGlyph && chineseGlyphs.filter((glyph) => glyph.includes(repeatedGlyph)).length === 2);
+    assert.doesNotMatch(svg(chinese.uris[0]), /<(?:text|image)\b/);
     assert.equal(invalid, null);
     for (const platform of ["ios", "android"] as const) {
-      const { images: [formula] } = await engine.dispatch({
+      const { images: [formula, mixed] } = await engine.dispatch({
         kind: "math", color: "#dddddd", platform,
-        formulas: [{ tex: "\\frac{a+b}{2}", display: false }],
+        formulas: [
+          { tex: "\\frac{a+b}{2}", display: false },
+          { tex: String.raw`G\text{ 负定}\quad\Longleftrightarrow\quad-G\text{ 正定}.`, display: true },
+        ],
       });
       assert.ok(formula && formula.uris.length === 1);
       assert.equal(formula.width, fraction.width);
@@ -412,6 +424,8 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
       const png = Buffer.from(formula.uris[0].split(",")[1], "base64");
       assert.equal(png.readUInt32BE(16), formula.width * 3);
       assert.equal(png.readUInt32BE(20), formula.height * 3);
+      assert.ok(mixed && mixed.width === chinese.width && mixed.baseline === chinese.baseline);
+      assert.match(mixed.uris[0], /^data:image\/png;base64,/);
     }
     const first = await engine.dispatch({ kind: "pdf", root: folder, path: "report.pdf", page: 1, pixels: 640 });
     const second = await engine.dispatch({ kind: "pdf", root: folder, path: "report.pdf", page: 2, pixels: 640 });
@@ -427,6 +441,10 @@ test("renders formula pixels and selects pages in a PDF larger than 1 MiB using 
     assert.deepEqual(await engine.dispatch({ kind: "pdf-search", root: folder, path: "report.pdf", query,
       options: { matchCase: false, wholeWord: true, regex: false } }),
     { matches: [[2, start, start + query.length]], limited: false, invalidPattern: false });
+    const tide = pageText.text.indexOf("潮汐");
+    assert.ok(tide >= 0 && pageText.glyphs?.some(([offset, , left, , right]) => offset === tide && right > left));
+    assert.deepEqual((await engine.dispatch({ kind: "pdf-search", root: folder, path: "report.pdf", query: "潮汐",
+      options: { matchCase: true, wholeWord: false, regex: false } })).matches, [[2, tide, tide + 2]]);
   } finally {
     engine.stop();
     await rm(folder, { recursive: true, force: true });

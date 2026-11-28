@@ -4,10 +4,10 @@ import { parseDocument, stringify } from "yaml";
 import type { Fence, MarkdownSearchOptions, TableContinuation, readMarkdownInfo, readMarkdownSource,
   searchMarkdownFile } from "../shared/contracts";
 import { markdownExtensions, markdownSearchPageSize, maxMarkdownTableLine } from "../shared/markdown-constants";
-import { markdownParser } from "../shared/markdown-math";
-import { markdownReferences } from "../shared/markdown-references";
 import { withWorkspaceFile } from "./workspace-file";
 import { rebaseMarkdownDestination } from "./markdown-links";
+import { markdownStructure } from "./markdown-structure";
+import { rustReader } from "./rust-reader";
 import { searchExpression } from "./text-search";
 
 const readBytes = 64 * 1024;
@@ -83,12 +83,8 @@ function yamlRows(source: string): Info["frontMatter"] {
   }
 }
 
-function headingTitle(source: string) {
-  return (markdownParser.parseInline(source, {})[0]?.children ?? [])
-    .map((token) => token.nesting === 0 ? token.content : "").join("").trim();
-}
-
-function blockContext(text: string, previous: string, { fence, table }: BlockContext): BlockContext {
+function blockContext(text: string, previous: string, { fence, table }: BlockContext,
+  reader: Awaited<ReturnType<typeof rustReader>>): BlockContext {
   const marker = /^ {0,3}(`{3,256}|~{3,256})(.*)$/.exec(text);
   if (fence) {
     return marker && marker[1][0] === fence.marker[0] && marker[1].length >= fence.marker.length && !marker[2].trim()
@@ -100,11 +96,12 @@ function blockContext(text: string, previous: string, { fence, table }: BlockCon
   if (table && text.includes("|") && !/^ {0,3}(?:#{1,6} |>|[-*+] )/.test(text)) return { table };
   if (!previous || !text.includes("|") || !/^ {0,3}[|: -]+\|[|: -]*$/.test(text) ||
     text.length > maxMarkdownTableLine || previous.length > maxMarkdownTableLine) return {};
-  return markdownParser.parse(`${previous}\n${text}`, {})[0]?.type === "table_open"
+  return markdownStructure(reader, `${previous}\n${text}`).tables[0]?.[0] === 0
     ? { table: { header: previous, separator: text } } : {};
 }
 
 async function scanIndex(file: FileHandle, size: number, revision: string): Promise<MarkdownIndex> {
+  const reader = await rustReader();
   const info: Info = { revision, lineCount: 0, headings: [], frontMatter: [], frontMatterEnd: 0, references: [] };
   const offsets: number[] = [];
   const usedAnchors = new Set<string>();
@@ -120,7 +117,7 @@ async function scanIndex(file: FileHandle, size: number, revision: string): Prom
   let afterFrontMatter = false;
   const references = new Set<string>();
   const addReferences = () => {
-    for (const entry of markdownReferences(referenceBlock)) {
+    for (const entry of markdownStructure(reader, referenceBlock).references) {
       const identifier = entry.label.replace(/[\t\n\r ]+/g, " ").trim().toLowerCase().toUpperCase();
       const bytes = Buffer.byteLength(entry.label + entry.destination + (entry.title ?? ""));
       if (references.has(identifier) || referenceBytes + bytes > 256 * 1024) continue;
@@ -132,7 +129,7 @@ async function scanIndex(file: FileHandle, size: number, revision: string): Prom
   };
   const addHeading = (label: string, level: number, line: number) => {
     if (info.headings.length >= 6000) return;
-    const title = headingTitle(label.slice(0, 1024));
+    const title = reader.markdownHeading(label.slice(0, 1024));
     if (!title) return;
     const base = title.normalize("NFC").toLowerCase().replace(/[^\p{L}\p{M}\p{N}_ -]/gu, "").replaceAll(" ", "-");
     let suffix = suffixes.get(base) ?? 0;
@@ -144,7 +141,7 @@ async function scanIndex(file: FileHandle, size: number, revision: string): Prom
   };
   const inspectLine = (text: string, line: number) => {
     const wasFenced = !!currentBlock.fence;
-    currentBlock = blockContext(text, previousLine, currentBlock);
+    currentBlock = blockContext(text, previousLine, currentBlock, reader);
     previousLine = text;
     if (wasFenced || currentBlock.fence) {
       previous = "";
@@ -233,7 +230,7 @@ export function loadMarkdownInfo(root: string, path: string) {
 }
 
 export async function markdownPreviewPosition(file: FileHandle, size: number, revision: string, actual: string, requested: number): Promise<PreviewPosition> {
-  const index = await getIndex(actual, file, size, revision);
+  const [index, reader] = await Promise.all([getIndex(actual, file, size, revision), rustReader()]);
   if (requested <= index.previewStart.line) return index.previewStart;
   const { offset, first } = checkpoint(index, Math.max(index.previewStart.line, requested - 24));
   const target = Math.min(requested, index.info.lineCount);
@@ -248,7 +245,7 @@ export async function markdownPreviewPosition(file: FileHandle, size: number, re
       position = { offset: entry.offset, line: number, ...block };
     }
     if (number >= target) break;
-    block = blockContext(entry.text, previous, block);
+    block = blockContext(entry.text, previous, block, reader);
     previous = entry.text;
   }
   return position;

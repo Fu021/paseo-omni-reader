@@ -19,7 +19,7 @@ jobs:
   verify:
     name: Verify (Node ${{ matrix.node }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +32,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - name: Set up the Rust WASM build
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.115 --locked
       - name: Prepare a Git installation
         if: matrix.node == 24
         run: |
@@ -46,19 +50,12 @@ jobs:
       - run: npm ci --include=dev --ignore-scripts
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:office
       - run: npm run check:package
         if: matrix.node == 22
-      - name: Load the npm package in Paseo
+      - name: Load the npm package in the minimum supported Paseo version
         if: matrix.node == 24
-        run: npm exec --yes --package=@getpaseo/cli@0.17.6 -- npm run check:package -- --paseo
+        run: npm exec --yes --package=@getpaseo/cli@0.17.5 -- npm run check:package -- --paseo
       - name: Audit runtime dependencies
         if: matrix.node == 24
         run: npm audit --omit=dev --audit-level=high
-      - name: Install LibreOffice
-        if: matrix.node == 24
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc libreoffice-impress
-      - name: Render Office previews
-        if: matrix.node == 24
-        run: npm run test:office

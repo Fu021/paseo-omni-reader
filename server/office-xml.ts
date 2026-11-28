@@ -22,9 +22,9 @@ export function plainText(node: Element): string {
   return descendants(node, "t").map(({ textContent }) => textContent ?? "").join("");
 }
 
-export async function loadOffice(bytes: Buffer, select: (path: string) => boolean): Promise<XmlParts> {
+export async function loadOfficeSources(bytes: Buffer, select: (path: string) => boolean) {
   const archive = await fromBufferPromise(bytes, { lazyEntries: true, validateEntrySizes: true });
-  const documents: XmlParts = new Map();
+  const documents = new Map<string, string>();
   let total = 0;
   try {
     if (archive.entryCount > 8_000) throw new Error("Document exceeds the preview limit.");
@@ -37,12 +37,17 @@ export async function loadOffice(bytes: Buffer, select: (path: string) => boolea
       for await (const chunk of stream) chunks.push(chunk);
       const source = Buffer.concat(chunks).toString("utf8");
       if (/<!DOCTYPE/i.test(source)) throw new Error("Unsupported document XML.");
-      documents.set(entry.fileName, parser.parseFromString(source, "application/xml"));
+      documents.set(entry.fileName, source);
     }
     return documents;
   } finally {
     archive.close();
   }
+}
+
+export async function loadOffice(bytes: Buffer, select: (path: string) => boolean): Promise<XmlParts> {
+  const documents = await loadOfficeSources(bytes, select);
+  return new Map(Array.from(documents, ([name, source]) => [name, parser.parseFromString(source, "application/xml")]));
 }
 
 export function relatedParts(documents: XmlParts, main: string, tag: string) {

@@ -1,7 +1,7 @@
 import { PDFiumLibrary, type PDFiumDocument } from "@hyzyla/pdfium/inline";
-import { encode } from "jpeg-js";
 import type { MarkdownSearchOptions, PageRun, PageTextMatch } from "../shared/contracts";
 import { readPageText } from "./pdf-text-geometry";
+import { rustReader } from "./rust-reader";
 import { searchExpression } from "./text-search";
 import { withWorkspaceFile } from "./workspace-file";
 
@@ -160,13 +160,9 @@ async function renderPage(key: string, bytes: () => Promise<Uint8Array>, pageNum
     const { width, height } = readSize(page);
     const scale = Math.min(pixels / width, 3072 / height, Math.sqrt(5_000_000 / (width * height)));
     const raster = await page.render({ width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) });
-    for (const quality of [88, 70, 49, 30, 15]) {
-      const jpeg = encode(raster, quality).data;
-      if (jpeg.byteLength <= maxJpegBytes) {
-        return { page: pageIndex, pages, width, height, uri: `data:image/jpeg;base64,${jpeg.toString("base64")}` };
-      }
-    }
-    throw new Error("PDF page is too detailed to preview.");
+    const { encodePageJpeg } = await rustReader();
+    const jpeg = encodePageJpeg(raster.data, raster.width, raster.height, maxJpegBytes);
+    return { page: pageIndex, pages, width, height, uri: `data:image/jpeg;base64,${Buffer.from(jpeg).toString("base64")}` };
   } finally {
     page.close();
   }

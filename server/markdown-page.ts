@@ -1,9 +1,11 @@
 import { StringDecoder } from "node:string_decoder";
 import type { Fence, TableContinuation } from "../shared/contracts";
 import { markdownExtensions, maxFormulaLength, maxMarkdownTableLine } from "../shared/markdown-constants";
-import { findFormulas, lineOffsets, markdownParser, possibleMath } from "../shared/markdown-math";
+import { findFormulas, lineOffsets, possibleMath } from "../shared/markdown-math";
 import { rebaseMarkdownLinks } from "./markdown-links";
 import { markdownPreviewPosition } from "./markdown-index";
+import { markdownStructure } from "./markdown-structure";
+import { rustReader } from "./rust-reader";
 import { withWorkspaceFile } from "./workspace-file";
 
 export const markdownPageBytes = 24 * 1024;
@@ -26,6 +28,7 @@ interface Boundary {
   end: number;
   fence?: Fence;
   table?: TableContinuation;
+  paragraphEnd?: boolean;
 }
 
 function chooseBoundary(text: string, initialFence: Fence | undefined): Boundary {
@@ -46,7 +49,7 @@ function chooseBoundary(text: string, initialFence: Fence | undefined): Boundary
     lastLine = { end, fence };
     if (!fence && !display && !line.trim()) paragraph = lastLine;
   }
-  if (paragraph.end >= text.length / 2) return paragraph;
+  if (paragraph.end > 0 && paragraph.end >= text.length / 2) return { ...paragraph, paragraphEnd: true };
   if (lastLine.end >= text.length / 2) return lastLine;
   return { end: text.length, fence };
 }
@@ -66,16 +69,15 @@ function keepFormulasTogether(text: string, prefix: string, boundary: Boundary):
   return { end: restOfLine ? formulaEnd + restOfLine[0].length : text.length, fence: undefined };
 }
 
-function continueTable(text: string, prefix: string, boundary: Boundary): Boundary {
+async function continueTable(text: string, prefix: string, boundary: Boundary): Promise<Boundary> {
   const source = prefix + text;
-  if (boundary.fence || !/^[ \t]*\|?[ \t]*:?-+:?[ \t]*\|/m.test(source)) return boundary;
+  if (boundary.paragraphEnd || boundary.fence || !/^[ \t]*\|?[ \t]*:?-+:?[ \t]*\|/m.test(source)) return boundary;
   const offsets = lineOffsets(source);
   const end = prefix.length + boundary.end;
-  const table = markdownParser.parse(source, {}).find((token) =>
-    token.type === "table_open" && token.level === 0 && token.map &&
-    offsets[token.map[0]] < end && end < offsets[token.map[1]]);
-  if (!table?.map) return boundary;
-  const [first, last] = table.map;
+  const table = markdownStructure(await rustReader(), source).tables.find(([first, last]) =>
+    offsets[first] < end && end < offsets[last]);
+  if (!table) return boundary;
+  const [first, last] = table;
   const headEnd = offsets[first + 2];
   const header = source.slice(offsets[first], offsets[first + 1]).trimEnd();
   const separator = source.slice(offsets[first + 1], headEnd).trimEnd();
@@ -115,7 +117,7 @@ export async function loadMarkdownPage(
     const text = offset + length === size ? decoder.end(bytes) : decoder.write(bytes);
     const current = eof ? text : new StringDecoder("utf8").write(bytes.subarray(0, pageBytes));
     const boundary = eof ? { end: text.length }
-      : continueTable(text, prefix, keepFormulasTogether(text, prefix, chooseBoundary(current, fence)));
+      : await continueTable(text, prefix, keepFormulasTogether(text, prefix, chooseBoundary(current, fence)));
     const kept = text.slice(0, boundary.end);
     const encoded = Buffer.from(kept);
     if (!bytes.subarray(0, encoded.length).equals(encoded)) throw new Error("Reader supports UTF-8 text files.");

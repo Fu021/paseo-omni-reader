@@ -39,7 +39,7 @@ export default function contribute(server: PluginServerContext) {
     const root = await workspaceDirectory(paseo, workspaceId);
     return extname(path).toLowerCase() === ".pdf"
       ? engine.dispatch({ kind: "pdf-layout", root, path })
-      : office.layout(root, path);
+      : office.layoutStatus(root, path);
   });
   server.handle(renderPdfPage, async ({ workspaceId, path, page, pixels }, { paseo }) =>
     engine.dispatch({ kind: "pdf", root: await workspaceDirectory(paseo, workspaceId), path, page, pixels }),

@@ -281,7 +281,7 @@ function FormulaPreview({ selection, theme, copy, close }: {
   const cardWidth = Math.min(400, width - 32);
   const previewScale = Math.min(1.6, (cardWidth - 32) / image.width, height * 0.35 / image.height);
   return (
-    <Modal transparent animationType="fade" visible onRequestClose={close}
+    <Modal transparent animationType="none" visible onRequestClose={close}
       supportedOrientations={["portrait", "landscape"]}>
       <View accessibilityViewIsModal onAccessibilityEscape={close}
         style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>

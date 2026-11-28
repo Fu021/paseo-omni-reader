@@ -2,3 +2,5 @@ node_modules/
 server/generated/
 *.tgz
 /reader-test-fixtures/
+/rust/reader/target/
+/vendor/office2pdf/

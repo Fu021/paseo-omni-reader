@@ -7,7 +7,7 @@
 
 ## 本机验证
 
-- 首次安装依赖运行 `npm ci --include=dev --ignore-scripts`。修改插件后运行 `npm run typecheck` 和 `npm test`。Office 排版测试需 LibreOffice Writer、Calc、Impress，运行 `npm run test:office`。
+- 首次安装依赖运行 `npm ci --include=dev --ignore-scripts`。从源码构建需要 Rust 1.92 或以上、`wasm32-unknown-unknown` 目标和 `wasm-bindgen-cli` 0.2.115。修改后运行 `npm run typecheck`、`npm test` 和 `npm run test:office`。`npm run check:package` 验证发布包可离线安装并预览 Office 文件。
 - 每次完成功能并通过相关检查后，直接在用户日常使用的本机 Paseo 守护进程上重载开发版，确认它已运行再交付。先用 `paseo plugin ls --json` 按安装路径确认本检出的运行时 ID，再执行 `paseo plugin reload <ID>`。
 - 首次在该守护进程加载开发版时，执行 `paseo plugin install <检出目录绝对路径> --id <ID>`。默认 ID 为 `paseo-omni-reader`，市场版占用时使用 `local-paseo-omni-reader`。若市场版已启用，切换到开发版时暂时停用市场版，保留其安装和设置。切换失败时恢复原先启用的版本。
 - 用 `paseo plugin ls <ID> --json` 确认开发版状态为 `running`。隔离环境可用于额外验证。本机开发版通过 `reload` 加载改动，守护进程保持运行。

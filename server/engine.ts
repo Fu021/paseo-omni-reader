@@ -1,9 +1,10 @@
 import { Worker } from "node:worker_threads";
 import documentWorker from "./generated/document-worker";
 import mathWorker from "./generated/math-worker";
+import { officeDirectory } from "./office-location";
 import type { EngineRequest, EngineResponse, EngineResults } from "./worker-protocol";
 
-function createWorkerQueue(source: string, timeout = 20_000) {
+function createWorkerQueue(source: string, timeout = 20_000, findDirectory?: () => Promise<string>) {
   let worker: Worker | undefined;
   let queue = Promise.resolve();
   let idle: ReturnType<typeof setTimeout> | undefined;
@@ -17,12 +18,15 @@ function createWorkerQueue(source: string, timeout = 20_000) {
     void previous?.terminate();
   }
 
-  function getWorker() {
+  async function getWorker() {
     if (worker) return worker;
+    const directory = findDirectory && await findDirectory();
+    if (stopped) throw new Error("Reader stopped.");
     const created = new Worker(source, {
       eval: true,
       execArgv: [],
       resourceLimits: { maxOldGenerationSizeMb: 192 },
+      workerData: directory,
     });
     created.on("error", () => { if (worker === created) release(); });
     created.unref();
@@ -35,9 +39,9 @@ function createWorkerQueue(source: string, timeout = 20_000) {
     if (pending >= 24) return Promise.reject(new Error("Reader is busy. Please retry."));
     pending++;
     clearTimeout(idle);
-    const result = queue.then(() => {
+    const result = queue.then(async () => {
       if (stopped) throw new Error("Reader stopped.");
-      const current = getWorker();
+      const current = await getWorker();
       return new Promise<EngineResults[Request["kind"]]>((resolve, reject) => {
         const finish = (response: EngineResponse | Error) => {
           clearTimeout(deadline);
@@ -68,10 +72,10 @@ function createWorkerQueue(source: string, timeout = 20_000) {
 }
 
 export function createEngine() {
-  const math = createWorkerQueue(mathWorker);
-  const document = createWorkerQueue(documentWorker);
-  const office = createWorkerQueue(documentWorker);
-  const search = createWorkerQueue(documentWorker, 5_000);
+  const math = createWorkerQueue(mathWorker, 20_000, officeDirectory);
+  const document = createWorkerQueue(documentWorker, 20_000, officeDirectory);
+  const office = createWorkerQueue(documentWorker, 20_000, officeDirectory);
+  const search = createWorkerQueue(documentWorker, 5_000, officeDirectory);
   const queues = { math, document, pdf: document, "pdf-layout": document, "pdf-text": document, "pdf-search": search,
     office, "office-layout": office, "office-text": office, "office-search": search, worksheet: office,
     "markdown-search": search, "worksheet-search": search };

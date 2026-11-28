@@ -4,7 +4,8 @@ import { maxFormulaLength, maxMarkdownTableLine } from "./markdown-constants";
 
 export { markdownExtensions, markdownSearchPageSize, maxFormulaLength, maxMarkdownTableLine } from "./markdown-constants";
 
-export const officeExtensions = ["docx", "xlsx", "pptx"];
+export const pagedOfficeExtensions = ["docx", "pptx"];
+export const officeExtensions = [...pagedOfficeExtensions, "xlsx"];
 export const markdownKind = "rich-assistant-markdown";
 export const messageSchema = z.object({
   text: z.string(),
@@ -199,7 +200,7 @@ export type PageRun = z.infer<typeof pageRun>;
 export const readDocumentLayout = defineRpc({
   name: "document.layout",
   input: fileTarget,
-  output: z.array(pageRun).min(1).nullable(),
+  output: z.union([z.array(pageRun).min(1), z.null(), z.literal("loading")]),
 });
 const pageGlyph = z.tuple([z.number(), z.number(), z.number(), z.number(), z.number(), z.number()]);
 export type PageGlyph = z.infer<typeof pageGlyph>;

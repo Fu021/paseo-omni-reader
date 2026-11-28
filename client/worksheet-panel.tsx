@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, Text, View, type ScrollView as ScrollViewInstance, type TextStyle } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRpc, useTranslation, type PluginFilePanelProps } from "@getpaseo/plugin/client";
@@ -497,7 +497,7 @@ function CellMatches({ value, hits, active, theme }: {
   })}{value.slice(offset)}</>;
 }
 
-export function WorksheetPanel({ props, print }: { props: PluginFilePanelProps; print: ReactNode }) {
+export function WorksheetPanel(props: PluginFilePanelProps) {
   const { file, host, workspaceId, theme, layout: { compact } } = props;
   const { t } = useTranslation(messages);
   const rpc = useRpc(readWorksheet);
@@ -507,7 +507,6 @@ export function WorksheetPanel({ props, print }: { props: PluginFilePanelProps; 
   const web = Platform.OS === "web";
   const tabActive = (props.tab as typeof props.tab & { active?: boolean }).active !== false;
   const [selected, setSelected] = useState(0);
-  const [printMode, setPrintMode] = useState(false);
   const [scale, setScale] = useState(1);
   const { findOpen, showFind, hideFind } = useReaderFindVisibility();
   const [addressOnly, setAddressOnly] = useState(false);
@@ -526,7 +525,7 @@ export function WorksheetPanel({ props, print }: { props: PluginFilePanelProps; 
   });
   const sheet = result.isPlaceholderData ? undefined : result.data?.sheet;
   const names = result.data?.names ?? [];
-  const find = useFindResults<WorksheetHit>([...fileKey, addressOnly], !!sheet && !printMode && tabActive && findOpen,
+  const find = useFindResults<WorksheetHit>([...fileKey, addressOnly], !!sheet && tabActive && findOpen,
     async (criteria) => {
       const address = cellAddress(criteria.query);
       const targets: WorksheetHit[] = address && sheet?.rows[address.row] && sheet.columns[address.column]
@@ -553,56 +552,46 @@ export function WorksheetPanel({ props, print }: { props: PluginFilePanelProps; 
     if (selected && !selected.includes("\n")) find.changeQuery(selected.slice(0, 256));
     showFind();
   };
-  useReaderFindShortcuts(panel, findId, web && tabActive && !!sheet && !printMode,
+  useReaderFindShortcuts(panel, findId, web && tabActive && !!sheet,
     { open: openFind, close: hideFind, move: find.move, isOpen: () => findOpen });
   const zoomControls = <ZoomControls {...{ scale, theme, compact }} disabled={!sheet}
     stepZoom={(factor) => setScale((previous) => boundZoom(previous * factor))} setZoom={setScale} />;
   return (
     <View ref={panel} tabIndex={web ? 0 : undefined} style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
-      {printMode ? print : (
-        <>
-          <Toolbar theme={theme} filePanel={props} nativePrimary={!web && zoomControls}>
-            {web && zoomControls}
-            <Control title={t("find")} icon="Search" selected={findOpen} disabled={!sheet}
-              theme={theme} compact={compact} onPress={findOpen ? hideFind : openFind} />
-            <ExternalFileAction {...props} />
-          </Toolbar>
-          {sheet?.truncated && <Text style={{ padding: 8, color: theme.colors.foregroundMuted }}>{t("worksheetTruncated")}</Text>}
-          <View style={{ flex: 1, minHeight: 0 }}>
-            {sheet?.rows.length && sheet.columns.length ? <WorksheetGrid key={selected}
-              {...{ sheet, scale, theme, pinned, onPin, matches, compact, findOpen }} focus={searchFocus}
-              active={find.active?.length === 4 ? find.active : undefined} onZoom={setScale} />
-              : result.isFetching ? <Loading />
-              : result.isError ? <ReadError theme={theme} compact={compact} label={t("textError")} error={result.error}
-                  retry={t("retry")} onRetry={() => { void result.refetch(); }} />
-              : <Text style={{ padding: 16, color: theme.colors.foregroundMuted }}>{t("empty")}</Text>}
-            {findOpen && <ReaderFindBar testID={findId} find={find} theme={theme} compact={compact} close={hideFind}
-              textOptions={!addressOnly} placeholder={t(addressOnly ? "addressSearch" : "worksheetSearch")}
-              option={<Control title={t("addressesOnly")} icon="MapPin" theme={theme} compact={compact} small
-                selected={addressOnly} onPress={() => { find.reset(); setAddressOnly((only) => !only); }} />} />}
-          </View>
-        </>
-      )}
-      <View style={{ flexDirection: "row", borderTopWidth: 1, borderColor: theme.colors.border, alignItems: "center" }}>
-        <Control title={t(printMode ? "worksheet" : "printLayout")} icon={printMode ? "Table2" : "Printer"}
-          theme={theme} compact={compact} onPress={() => {
-            if (findOpen) hideFind();
-            setPrintMode((previous) => !previous);
-          }} />
-        {!printMode && (
-          <ScrollView horizontal nestedScrollEnabled style={{ flex: 1 }}
-            contentContainerStyle={{ paddingHorizontal: 4, paddingVertical: 2, gap: 4 }}>
-            {names.map((name, index) => (
-              <Control key={index} title={name || `${t("sheet")} ${index + 1}`} theme={theme} compact={compact}
-                selected={index === selected} onPress={() => {
-                  if (index === selected) return;
-                  setSelected(index);
-                  find.reset();
-                }} />
-            ))}
-          </ScrollView>
-        )}
+      <Toolbar theme={theme} filePanel={props} nativePrimary={!web && zoomControls}>
+        {web && zoomControls}
+        <Control title={t("find")} icon="Search" selected={findOpen} disabled={!sheet}
+          theme={theme} compact={compact} onPress={findOpen ? hideFind : openFind} />
+        <ExternalFileAction {...props} />
+      </Toolbar>
+      {sheet?.truncated && <Text style={{ padding: 8, color: theme.colors.foregroundMuted }}>{t("worksheetTruncated")}</Text>}
+      <View style={{ flex: 1, minHeight: 0 }}>
+        {sheet?.rows.length && sheet.columns.length ? <WorksheetGrid key={selected}
+          {...{ sheet, scale, theme, pinned, onPin, matches, compact, findOpen }} focus={searchFocus}
+          active={find.active?.length === 4 ? find.active : undefined} onZoom={setScale} />
+          : result.isFetching ? <Loading />
+          : result.isError ? <ReadError theme={theme} compact={compact} label={t("textError")} error={result.error}
+              retry={t("retry")} onRetry={() => { void result.refetch(); }} />
+          : <Text style={{ padding: 16, color: theme.colors.foregroundMuted }}>{t("empty")}</Text>}
+        {findOpen && <ReaderFindBar testID={findId} find={find} theme={theme} compact={compact} close={hideFind}
+          textOptions={!addressOnly} placeholder={t(addressOnly ? "addressSearch" : "worksheetSearch")}
+          option={<Control title={t("addressesOnly")} icon="MapPin" theme={theme} compact={compact} small
+            selected={addressOnly} onPress={() => { find.reset(); setAddressOnly((only) => !only); }} />} />}
       </View>
+      {!!names.length && (
+        <ScrollView horizontal nestedScrollEnabled
+          style={{ flexGrow: 0, borderTopWidth: 1, borderColor: theme.colors.border }}
+          contentContainerStyle={{ paddingHorizontal: 4, paddingVertical: 2, gap: 4 }}>
+          {names.map((name, index) => (
+            <Control key={index} title={name || `${t("sheet")} ${index + 1}`} theme={theme} compact={compact}
+              selected={index === selected} onPress={() => {
+                if (index === selected) return;
+                setSelected(index);
+                find.reset();
+              }} />
+          ))}
+        </ScrollView>
+      )}
     </View>
   );
 }

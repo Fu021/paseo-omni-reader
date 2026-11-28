@@ -22,7 +22,6 @@ import {
 } from "./pdf-geometry";
 import { boundZoom, clamp, panAndPinch, type Contact, type Point, type Position, type Size } from "./viewport-geometry";
 import { bindWebGestures, focusReaderFind } from "./web";
-import { WorksheetPanel } from "./worksheet-panel";
 import { ZoomControls } from "./zoom-controls";
 
 const initialPosition: Position = { x: 0, y: 0, scale: 1 };
@@ -47,8 +46,7 @@ export function OfficePanel(props: PluginFilePanelProps) {
   const { workspaceId, file: { path } } = props;
   const renderPage = useCallback<RenderPage>((page, pixels) => render({ workspaceId, path, page, pixels }),
     [render, workspaceId, path]);
-  const print = <PagedReader {...props} kind="office" render={renderPage} />;
-  return props.file.extension === "xlsx" ? <WorksheetPanel props={props} print={print} /> : print;
+  return <PagedReader {...props} kind="office" render={renderPage} />;
 }
 
 interface StoredView {
@@ -150,8 +148,14 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
   const fileKey = useMemo(() => ["omni-reader", kind, host.id, workspaceId, file.path, version],
     [kind, host.id, workspaceId, file.path, version]);
   const query = useQuery({
-    queryKey: [...fileKey, "layout"],
-    queryFn: () => readLayout({ workspaceId, path: file.path }),
+    queryKey: [...fileKey, kind === "office" ? "office-layout" : "layout"],
+    queryFn: async ({ signal }) => {
+      while (!signal.aborted) {
+        const result = await readLayout({ workspaceId, path: file.path });
+        if (result !== "loading") return result;
+      }
+      throw new Error("The document preview was cancelled.");
+    },
     staleTime: Infinity,
     gcTime: 30_000,
     retry: false,
@@ -346,15 +350,7 @@ function PagedReader(props: PluginFilePanelProps & { kind: ReaderKind; render: R
     });
   }, [web, enabled]);
 
-  if (kind === "office" && query.data === null) {
-    if (file.extension !== "xlsx") return <StructuredPanel {...props} />;
-    return (
-      <View style={{ flex: 1 }}>
-        <Toolbar theme={theme} filePanel={props}><ExternalFileAction {...props} /></Toolbar>
-        <Text style={{ padding: 12, color: theme.colors.foregroundMuted }}>{t("printLayoutUnavailable")}</Text>
-      </View>
-    );
-  }
+  if (kind === "office" && query.data === null) return <StructuredPanel {...props} />;
   let pages: React.ReactNode;
   if (tabActive && geometry && position) {
     const numbers = Array.from({ length: Math.min(last - first + 1, 20) }, (_, index) => first + index);

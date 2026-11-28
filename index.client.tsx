@@ -5,10 +5,12 @@ import { messages } from "./client/messages";
 import { OfficePanel, PdfPanel } from "./client/pdf-panel";
 import { MarkdownPanel } from "./client/markdown-panel";
 import { ReaderSettings } from "./client/settings";
+import { WorksheetPanel } from "./client/worksheet-panel";
 import { markdownExtensions, officeExtensions } from "./shared/contracts";
 
 const pdfReader = fileReader(PdfPanel);
-const documentReader = fileReader(OfficePanel);
+const documentReader = fileReader((props) =>
+  props.file.extension === "xlsx" ? <WorksheetPanel {...props} /> : <OfficePanel {...props} />);
 const markdownReader = fileReader(MarkdownPanel);
 const defaultReader = { preferByDefault: true };
 
